@@ -4,6 +4,14 @@ Foreground Android push-to-talk voice over MQTT.
 
 [![GitHub stars](https://img.shields.io/github/stars/programmer131/mqtt-call?style=flat-square)](https://github.com/programmer131/mqtt-call/stargazers) [Stars page](https://programmer131.github.io/mqtt-call/stars.html)
 
+## Support me
+
+If MQTT Call is useful to you, you can support development by scanning the payment QR code below.
+
+<p align="center">
+  <img src="docs/paymentQR.jpeg" alt="Payment QR code" width="280">
+</p>
+
 The first demo uses these shared defaults on every install:
 
 - Broker: `broker.emqx.io:1883`
