@@ -1,0 +1,15 @@
+# Local isolated worktrees
+.worktrees/
+
+# Android/Gradle build output
+.gradle/
+build/
+*/build/
+local.properties
+
+# IDE files
+.idea/
+*.iml
+
+# OS files
+.DS_Store
