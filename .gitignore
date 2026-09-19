@@ -3,6 +3,7 @@
 
 # Android/Gradle build output
 .gradle/
+.kotlin/
 build/
 */build/
 local.properties
