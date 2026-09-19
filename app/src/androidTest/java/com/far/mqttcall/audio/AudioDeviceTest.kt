@@ -2,8 +2,16 @@ package com.far.mqttcall.audio
 
 import android.media.AudioFormat
 import android.media.AudioRecord
+import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.far.mqttcall.crypto.AndroidCryptoEngine
+import com.far.mqttcall.domain.AppDefaults
+import com.far.mqttcall.protocol.PacketHeader
+import com.far.mqttcall.protocol.PacketKind
+import com.far.mqttcall.settings.AndroidCallSettingsStore
+import com.far.mqttcall.settings.SavedCallSettings
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -36,6 +44,40 @@ class AudioDeviceTest {
         )
 
         assertTrue("AudioRecord buffer size: $bufferSize", bufferSize > 0)
+    }
+
+    @Test
+    fun android_keystore_crypto_round_trip_works_on_device() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val engine = AndroidCryptoEngine(context)
+        val session = engine.prepare("3344", AppDefaults.defaultKey.toCharArray())
+        val packet = session.encrypt(
+            PacketHeader(
+                kind = PacketKind.CLAIM,
+                sessionId = ByteArray(16) { 7 },
+                sequence = 1,
+                nonce = ByteArray(12),
+            ),
+            byteArrayOf(1, 2, 3),
+        )
+
+        assertArrayEquals(byteArrayOf(1, 2, 3), session.decrypt(packet)?.plaintext)
+    }
+
+    @Test
+    fun protected_settings_round_trip_works_on_device() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val store = AndroidCallSettingsStore(context)
+        val original = store.load()
+        val custom = SavedCallSettings(original.broker, "9988", "device-test-key")
+        try {
+            store.save(custom)
+            val loaded = store.load()
+            assertEquals(custom.channel, loaded.channel)
+            assertEquals(custom.key, loaded.key)
+        } finally {
+            store.save(original)
+        }
     }
 
     private companion object {

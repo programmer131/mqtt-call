@@ -10,7 +10,6 @@ import com.far.mqttcall.domain.AppDefaults
 import com.far.mqttcall.domain.BrokerProfile
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
-import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -44,7 +43,6 @@ class InMemoryCallSettingsStore(
 
 class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
     private val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
-    private val random = SecureRandom()
 
     override fun load(): SavedCallSettings {
         val broker = BrokerProfile(
@@ -78,9 +76,9 @@ class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
     }
 
     private fun encryptKey(value: String): String {
-        val nonce = ByteArray(12).also(random::nextBytes)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, wrappingKey(), GCMParameterSpec(128, nonce))
+        cipher.init(Cipher.ENCRYPT_MODE, wrappingKey())
+        val nonce = cipher.iv
         val ciphertext = cipher.doFinal(value.toByteArray(StandardCharsets.UTF_8))
         return Base64.encodeToString(nonce + ciphertext, Base64.NO_WRAP)
     }

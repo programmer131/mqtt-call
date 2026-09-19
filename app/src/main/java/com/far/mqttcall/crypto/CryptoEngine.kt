@@ -49,14 +49,22 @@ internal fun deriveChannelKey(channel: String, passphrase: CharArray): SecretKey
 internal class AesGcmCryptoSession(
     private val key: SecretKey,
     private val random: SecureRandom = SecureRandom(),
+    private val providerGeneratedNonce: Boolean = false,
 ) : CryptoSession {
     private val decryptedPackets = mutableSetOf<PacketIdentity>()
 
     override fun encrypt(header: PacketHeader, plaintext: ByteArray): ByteArray {
-        val nonce = ByteArray(12).also(random::nextBytes)
-        val actualHeader = header.copy(nonce = nonce)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(128, nonce))
+        val actualHeader = if (providerGeneratedNonce) {
+            cipher.init(Cipher.ENCRYPT_MODE, key)
+            val nonce = cipher.iv
+            require(nonce.size == 12) { "AES-GCM provider returned an invalid nonce" }
+            header.copy(nonce = nonce)
+        } else {
+            val nonce = ByteArray(12).also(random::nextBytes)
+            cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(128, nonce))
+            header.copy(nonce = nonce)
+        }
         cipher.updateAAD(PacketCodec.headerBytes(actualHeader))
         return PacketCodec.encode(actualHeader, cipher.doFinal(plaintext))
     }

@@ -28,7 +28,7 @@ class AndroidCryptoEngine(private val context: Context) : CryptoEngine {
         }
 
         securityLevel = inspectSecurityLevel(imported)
-        return AesGcmCryptoSession(imported)
+        return AesGcmCryptoSession(imported, providerGeneratedNonce = true)
     }
 
     private fun importKey(alias: String, key: SecretKey, preferStrongBox: Boolean): SecretKey? {
@@ -41,7 +41,6 @@ class AndroidCryptoEngine(private val context: Context) : CryptoEngine {
             )
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                 .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .setRandomizedEncryptionRequired(false)
                 .apply {
                     if (preferStrongBox && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                         setIsStrongBoxBacked(
