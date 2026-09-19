@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MQTT Call · GitHub stars</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+    body { display: grid; min-height: 100vh; place-items: center; margin: 0; background: #071b14; color: #effff6; }
+    main { width: min(34rem, calc(100% - 3rem)); padding: 2.5rem; border: 1px solid #2e7358; border-radius: 1.5rem; background: #0e2c21; text-align: center; }
+    .star { font-size: 4rem; color: #ffd166; }
+    a { color: #65e5af; }
+    #count { margin: 1rem 0; font-size: 3rem; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="star" aria-hidden="true">★</div>
+    <h1>MQTT Call</h1>
+    <p>Encrypted push-to-talk voice over MQTT.</p>
+    <div id="count" aria-live="polite">Loading…</div>
+    <p><a href="https://github.com/programmer131/mqtt-call">View the public repository</a></p>
+  </main>
+  <script>
+    fetch('https://api.github.com/repos/programmer131/mqtt-call')
+      .then(response => response.ok ? response.json() : Promise.reject(response.status))
+      .then(repo => { document.getElementById('count').textContent = `${repo.stargazers_count} stars`; })
+      .catch(() => { document.getElementById('count').textContent = 'Star this project on GitHub'; });
+  </script>
+</body>
+</html>
