@@ -1,5 +1,6 @@
 package com.far.mqttcall
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import com.far.mqttcall.audio.AudioBatch
 import com.far.mqttcall.audio.AudioEngine
@@ -21,16 +22,20 @@ import com.far.mqttcall.transport.MqttTransport
 import java.nio.ByteBuffer
 import java.security.SecureRandom
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 enum class ConnectionState {
     DISCONNECTED,
@@ -85,8 +90,9 @@ class CallViewModel(
     private val jitterBuffer = JitterBuffer()
     private val _uiState = MutableStateFlow(settingsStore.load().toUiState())
     private var cryptoSession: CryptoSession? = null
-    private var captureJob: Job? = null
     private var playbackJob: Job? = null
+    private var remoteFloorWatchJob: Job? = null
+    private val talkMutex = Mutex()
 
     val uiState: StateFlow<CallUiState> = _uiState.asStateFlow()
 
@@ -152,7 +158,7 @@ class CallViewModel(
 
     private fun disconnect() {
         scope.launch {
-            releaseTalk()
+            releaseTalkNow()
             transport.disconnect()
             cryptoSession = null
             update {
@@ -198,38 +204,51 @@ class CallViewModel(
     private fun pressTalk() {
         val state = _uiState.value
         if (!state.canTalk || !state.microphoneGranted) return
-        if (!floor.localClaim(sessionId, clockMs() + TALK_LEASE_MS)) return
+        if (!floor.localClaim(sessionId, clockMs() + TALK_LEASE_MS)) {
+            log("PTT press rejected: floor busy")
+            return
+        }
+        update { copy(talkState = floor.state(), canTalk = false) }
 
         scope.launch {
-            runCatching {
-                publishControl(CONTROL_CLAIM)
-                captureJob?.cancel()
-                captureJob = scope.launch {
+            talkMutex.withLock {
+                // A quick tap may have released the floor before this coroutine ran.
+                if (floor.state() != TalkState.LOCAL_TALKING) return@withLock
+                runCatching {
+                    publishControl(CONTROL_CLAIM)
+                    log("PTT claim published")
                     audioEngine.startCapture { frames ->
-                        if (floor.state() != TalkState.LOCAL_TALKING) return@startCapture
-                        val payload = encodeAudio(frames)
-                        publishAudio(payload)
+                        if (!floor.renewLocal(sessionId, clockMs() + TALK_LEASE_MS)) {
+                            log("Audio batch dropped: local floor lost")
+                            return@startCapture
+                        }
+                        publishAudio(encodeAudio(frames))
                     }
+                }.onFailure { error ->
+                    log("PTT start failed: ${error.message}")
+                    floor.releaseLocal()
+                    runCatching { audioEngine.stopCapture() }
+                    update { copy(talkState = floor.state(), canTalk = isConnectedAndFree(), error = error.message) }
                 }
-                update { copy(talkState = floor.state(), canTalk = false) }
-            }.onFailure { error ->
-                floor.releaseLocal()
-                update { copy(talkState = floor.state(), error = error.message) }
             }
         }
     }
 
     private fun releaseTalk() {
-        if (floor.state() != TalkState.LOCAL_TALKING) {
-            scope.launch { audioEngine.stopCapture() }
-            return
-        }
-        scope.launch {
-            runCatching { publishControl(CONTROL_RELEASE) }
-            audioEngine.stopCapture()
+        // Drop the floor immediately so a capture that is still starting sends nothing.
+        floor.releaseLocal()
+        scope.launch { releaseTalkNow() }
+    }
+
+    private suspend fun releaseTalkNow() {
+        talkMutex.withLock {
             floor.releaseLocal()
-            captureJob?.cancel()
-            captureJob = null
+            audioEngine.stopCapture()
+            if (_uiState.value.connection == ConnectionState.CONNECTED) {
+                runCatching { publishControl(CONTROL_RELEASE) }
+                    .onSuccess { log("PTT release published, sent=${_uiState.value.sentBatches}") }
+                    .onFailure { log("PTT release failed: ${it.message}") }
+            }
             update { copy(talkState = floor.state(), canTalk = isConnectedAndFree()) }
         }
     }
@@ -255,34 +274,57 @@ class CallViewModel(
     }
 
     private suspend fun handleMessage(payload: ByteArray) {
-        val decoded = cryptoSession?.decrypt(payload) ?: return
+        val decoded = cryptoSession?.decrypt(payload) ?: run {
+            log("Dropped undecryptable packet (${payload.size} bytes)")
+            return
+        }
+        val remoteSession = decoded.header.sessionId
+        // MQTT 3.1.1 brokers echo our own publishes back to us; never treat them as remote.
+        if (remoteSession.contentEquals(sessionId)) return
         when (decoded.header.kind) {
             com.far.mqttcall.protocol.PacketKind.CLAIM -> {
-                val expiresAt = decodeClaim(decoded.plaintext) ?: return
-                floor.onRemoteClaim(decoded.header.sessionId, expiresAt)
+                decodeClaim(decoded.plaintext) ?: return
+                // The sender's expiry uses its own wall clock; lease from our clock to tolerate skew.
+                floor.onRemoteClaim(remoteSession, clockMs() + TALK_LEASE_MS)
+                log("Remote claim received")
+                watchRemoteFloor()
                 refreshTalkState()
             }
             com.far.mqttcall.protocol.PacketKind.RELEASE -> {
-                floor.onRemoteRelease(decoded.header.sessionId)
+                floor.onRemoteRelease(remoteSession)
+                jitterBuffer.finish(remoteSession)
+                log("Remote release received, received=${_uiState.value.receivedBatches}")
+                startPlaybackIfReady()
                 refreshTalkState()
             }
             com.far.mqttcall.protocol.PacketKind.AUDIO -> {
                 val frames = decodeAudio(decoded.plaintext) ?: return
-                floor.onRemoteAudio(decoded.header.sessionId)
-                jitterBuffer.offer(AudioBatch(decoded.header.sessionId, decoded.header.sequence, frames))
+                floor.onRemoteAudio(remoteSession, clockMs() + TALK_LEASE_MS)
+                jitterBuffer.offer(AudioBatch(remoteSession, decoded.header.sequence, frames))
                 update { copy(receivedBatches = receivedBatches + 1, bufferState = jitterBuffer.state()) }
-                startPlaybackIfReady(decoded.header.sessionId, decoded.header.sequence)
+                startPlaybackIfReady()
+                watchRemoteFloor()
                 refreshTalkState()
             }
         }
     }
 
-    private fun startPlaybackIfReady(sessionId: ByteArray, sequence: Long) {
+    /** Remote leases can lapse without a RELEASE (lost packet, dropped peer); re-enable PTT when they do. */
+    private fun watchRemoteFloor() {
+        if (remoteFloorWatchJob?.isActive == true) return
+        remoteFloorWatchJob = scope.launch {
+            while (floor.activeRemoteSession() != null) delay(FLOOR_WATCH_INTERVAL_MS)
+            refreshTalkState()
+        }
+    }
+
+    private fun startPlaybackIfReady() {
         if (jitterBuffer.state() != BufferState.PLAYING || playbackJob?.isActive == true) return
         playbackJob = scope.launch {
-            while (jitterBuffer.state() == BufferState.PLAYING) {
+            while (true) {
                 val frame = jitterBuffer.pollFrame() ?: break
-                audioEngine.play(AudioBatch(sessionId, sequence, listOf(frame)))
+                runCatching { audioEngine.play(AudioBatch(ByteArray(0), 0, listOf(frame))) }
+                    .onFailure { log("Playback failed: ${it.message}") }
             }
             update { copy(bufferState = jitterBuffer.state()) }
         }
@@ -312,8 +354,12 @@ class CallViewModel(
             sequence = sequence.getAndIncrement(),
             nonce = ByteArray(NONCE_LENGTH),
         )
-        transport.publish(session.encrypt(header, payload), AUDIO_QOS)
-        update { copy(sentBatches = sentBatches + 1) }
+        runCatching { transport.publish(session.encrypt(header, payload), AUDIO_QOS) }
+            .onSuccess { update { copy(sentBatches = sentBatches + 1) } }
+            .onFailure {
+                if (it is CancellationException) throw it
+                log("Audio publish failed: ${it.message}")
+            }
     }
 
     private fun encodeAudio(frames: List<ByteArray>): ByteArray {
@@ -360,6 +406,11 @@ class CallViewModel(
         else -> error("Unsupported control packet")
     }
 
+    private fun log(message: String) {
+        // android.util.Log is unavailable in JVM unit tests.
+        runCatching { Log.i(LOG_TAG, message) }
+    }
+
     private fun update(transform: CallUiState.() -> CallUiState) {
         _uiState.value = _uiState.value.transform()
     }
@@ -380,6 +431,8 @@ class CallViewModel(
         const val CONTROL_QOS = 1
         const val AUDIO_QOS = 0
         const val MAX_FRAMES_PER_BATCH = 10
+        const val FLOOR_WATCH_INTERVAL_MS = 200L
+        const val LOG_TAG = "MqttCall"
     }
 }
 

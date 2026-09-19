@@ -46,6 +46,35 @@ class JitterBufferTest {
         assertEquals(BufferState.BUFFERING, buffer.state())
     }
 
+    @Test
+    fun `finish plays out a short tail and then accepts a new speaker`() {
+        val buffer = JitterBuffer()
+        val first = byteArrayOf(1)
+        buffer.offer(AudioBatch(first, 10, listOf(byteArrayOf(10))))
+        assertEquals(BufferState.BUFFERING, buffer.state())
+
+        buffer.finish(first)
+        assertEquals(BufferState.PLAYING, buffer.state())
+        assertNotNull(buffer.pollFrame())
+        assertNull(buffer.pollFrame())
+
+        val second = byteArrayOf(2)
+        repeat(3) { buffer.offer(AudioBatch(second, it.toLong(), listOf(byteArrayOf(it.toByte())))) }
+        assertEquals(BufferState.PLAYING, buffer.state())
+    }
+
+    @Test
+    fun `a new speaker is accepted once the previous stream has drained`() {
+        val buffer = JitterBuffer()
+        repeat(3) { buffer.offer(batch(it + 100L)) }
+        drainAllFrames(buffer)
+
+        val next = byteArrayOf(2)
+        repeat(3) { buffer.offer(AudioBatch(next, it.toLong(), listOf(byteArrayOf(1)))) }
+
+        assertEquals(BufferState.PLAYING, buffer.state())
+    }
+
     private fun drainAllFrames(buffer: JitterBuffer) {
         while (buffer.pollFrame() != null) {
             // Drain until the buffer reports an underrun.

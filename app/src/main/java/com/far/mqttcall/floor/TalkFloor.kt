@@ -19,6 +19,7 @@ class TalkFloor(private val clockMs: () -> Long) {
     private var remoteSession: TalkClaim? = null
     private var localWasRejected = false
 
+    @Synchronized
     fun onRemoteClaim(sessionId: ByteArray, expiresAtMs: Long) {
         pruneExpired()
         if (expiresAtMs <= clockMs() || sessionId.isEmpty()) return
@@ -40,10 +41,12 @@ class TalkFloor(private val clockMs: () -> Long) {
         }
     }
 
+    @Synchronized
     fun onRemoteAudio(sessionId: ByteArray, expiresAtMs: Long = clockMs() + TALK_LEASE_MS) {
         onRemoteClaim(sessionId, expiresAtMs)
     }
 
+    @Synchronized
     fun onRemoteRelease(sessionId: ByteArray) {
         if (remoteSession?.sessionId?.contentEquals(sessionId) == true) {
             remoteSession = null
@@ -52,16 +55,19 @@ class TalkFloor(private val clockMs: () -> Long) {
         pruneExpired()
     }
 
+    @Synchronized
     fun canTransmit(): Boolean {
         pruneExpired()
         return remoteSession == null
     }
 
+    @Synchronized
     fun activeRemoteSession(): ByteArray? {
         pruneExpired()
         return remoteSession?.sessionId?.copyOf()
     }
 
+    @Synchronized
     fun localClaim(sessionId: ByteArray, expiresAtMs: Long): Boolean {
         pruneExpired()
         if (sessionId.isEmpty() || expiresAtMs <= clockMs()) return false
@@ -78,12 +84,25 @@ class TalkFloor(private val clockMs: () -> Long) {
         return true
     }
 
+    @Synchronized
+    fun renewLocal(sessionId: ByteArray, expiresAtMs: Long): Boolean {
+        pruneExpired()
+        val local = localSession ?: return false
+        if (!local.sessionId.contentEquals(sessionId) || expiresAtMs <= clockMs()) return false
+        if (remoteSession != null) return false
+
+        localSession = TalkClaim(sessionId.copyOf(), expiresAtMs)
+        return true
+    }
+
+    @Synchronized
     fun releaseLocal() {
         localSession = null
         localWasRejected = false
         pruneExpired()
     }
 
+    @Synchronized
     fun state(): TalkState {
         pruneExpired()
         return when {

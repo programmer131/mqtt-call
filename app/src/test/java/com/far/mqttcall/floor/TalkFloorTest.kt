@@ -1,11 +1,14 @@
 package com.far.mqttcall.floor
 
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TalkFloorTest {
+    private val localSession = remoteSession(9)
+
     @Test
     fun `remote claim disables local transmit until release or expiry`() {
         val clock = FakeClock(0)
@@ -15,6 +18,19 @@ class TalkFloorTest {
         assertFalse(floor.canTransmit())
         clock.advance(1_001)
         assertTrue(floor.canTransmit())
+    }
+
+    @Test
+    fun `local claim can be renewed while audio is flowing`() {
+        val clock = FakeClock(0)
+        val floor = TalkFloor(clock::now)
+        assertTrue(floor.localClaim(localSession, expiresAtMs = 1_000))
+
+        clock.advance(900)
+        assertTrue(floor.renewLocal(localSession, expiresAtMs = 1_900))
+        clock.advance(200)
+
+        assertEquals(TalkState.LOCAL_TALKING, floor.state())
     }
 
     @Test

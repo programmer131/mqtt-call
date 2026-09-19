@@ -5,6 +5,10 @@ import com.far.mqttcall.audio.AudioEngine
 import com.far.mqttcall.crypto.JvmCryptoEngine
 import com.far.mqttcall.domain.AppDefaults
 import com.far.mqttcall.domain.BrokerProfile
+import com.far.mqttcall.floor.TalkState
+import com.far.mqttcall.protocol.PacketHeader
+import com.far.mqttcall.protocol.PacketKind
+import java.nio.ByteBuffer
 import com.far.mqttcall.settings.InMemoryCallSettingsStore
 import com.far.mqttcall.transport.MqttEvent
 import com.far.mqttcall.transport.MqttTransport
@@ -78,7 +82,84 @@ class CallViewModelTest {
         assertTrue(fixture.audio.stopped)
     }
 
+    @Test
+    fun `release publishes release after local lease has expired`() = runTest {
+        val fixture = Fixture()
+        fixture.viewModel.dispatch(CallAction.Connect)
+        advanceUntilIdle()
+        fixture.transport.incoming.emit(MqttEvent.Connected)
+        fixture.viewModel.dispatch(CallAction.RequestMicrophone)
+        advanceUntilIdle()
+
+        fixture.viewModel.dispatch(CallAction.PressTalk)
+        advanceUntilIdle()
+        fixture.nowMs = 1_001
+
+        fixture.viewModel.dispatch(CallAction.ReleaseTalk)
+        advanceUntilIdle()
+
+        assertEquals(2, fixture.transport.published.size)
+        assertTrue(fixture.audio.stopped)
+    }
+
+    @Test
+    fun `audio keeps flowing past the initial one second lease`() = runTest {
+        val fixture = Fixture()
+        fixture.connectWithMicrophone()
+
+        fixture.viewModel.dispatch(CallAction.PressTalk)
+        advanceUntilIdle()
+        repeat(10) {
+            fixture.nowMs += 200
+            fixture.audio.emitBatch()
+        }
+
+        assertEquals(10L, fixture.viewModel.uiState.value.sentBatches)
+    }
+
+    @Test
+    fun `own echoed packets are ignored`() = runTest {
+        val fixture = Fixture()
+        fixture.connectWithMicrophone()
+        fixture.viewModel.dispatch(CallAction.PressTalk)
+        advanceUntilIdle()
+        fixture.audio.emitBatch()
+        fixture.viewModel.dispatch(CallAction.ReleaseTalk)
+        advanceUntilIdle()
+
+        fixture.transport.published.toList().forEach {
+            fixture.transport.incoming.emit(MqttEvent.Message(it))
+        }
+        advanceUntilIdle()
+
+        assertEquals(0L, fixture.viewModel.uiState.value.receivedBatches)
+        assertEquals(TalkState.IDLE, fixture.viewModel.uiState.value.talkState)
+        assertTrue(fixture.viewModel.uiState.value.canTalk)
+    }
+
+    @Test
+    fun `remote claim with a skewed clock still blocks then release frees the floor`() = runTest {
+        val fixture = Fixture()
+        fixture.connectWithMicrophone()
+
+        // The peer's clock is far behind ours, so its absolute expiry is already in our past.
+        fixture.nowMs = 1_000_000
+        fixture.transport.incoming.emit(MqttEvent.Message(fixture.peerPacket(PacketKind.CLAIM, 1, claimExpiry(0))))
+        advanceUntilIdle()
+        assertEquals(TalkState.REMOTE_TALKING, fixture.viewModel.uiState.value.talkState)
+        assertFalse(fixture.viewModel.uiState.value.canTalk)
+
+        fixture.transport.incoming.emit(MqttEvent.Message(fixture.peerPacket(PacketKind.AUDIO, 2, audioPayload())))
+        fixture.transport.incoming.emit(MqttEvent.Message(fixture.peerPacket(PacketKind.RELEASE, 3, ByteArray(0))))
+        advanceUntilIdle()
+
+        assertEquals(1L, fixture.viewModel.uiState.value.receivedBatches)
+        assertEquals(TalkState.IDLE, fixture.viewModel.uiState.value.talkState)
+        assertTrue(fixture.viewModel.uiState.value.canTalk)
+    }
+
     private class Fixture {
+        var nowMs = 0L
         val transport = FakeTransport()
         val audio = FakeAudioEngine()
         val viewModel = CallViewModel(
@@ -87,8 +168,20 @@ class CallViewModelTest {
             audioEngine = audio,
             settingsStore = InMemoryCallSettingsStore(),
             sessionId = ByteArray(16) { 1 },
-            clockMs = { 0L },
+            clockMs = { nowMs },
             scope = CoroutineScope(Dispatchers.Unconfined + SupervisorJob()),
+        )
+        private val peer = JvmCryptoEngine().prepare(AppDefaults.defaultChannel, AppDefaults.defaultKey.toCharArray())
+
+        suspend fun connectWithMicrophone() {
+            viewModel.dispatch(CallAction.Connect)
+            transport.incoming.emit(MqttEvent.Connected)
+            viewModel.dispatch(CallAction.RequestMicrophone)
+        }
+
+        fun peerPacket(kind: PacketKind, sequence: Long, plaintext: ByteArray): ByteArray = peer.encrypt(
+            PacketHeader(kind, ByteArray(16) { 2 }, sequence, ByteArray(12)),
+            plaintext,
         )
     }
 }
@@ -113,8 +206,15 @@ private class FakeAudioEngine : AudioEngine {
     var started = false
     var stopped = false
 
+    private var onBatch: (suspend (List<ByteArray>) -> Unit)? = null
+
     override suspend fun startCapture(onBatch: suspend (List<ByteArray>) -> Unit) {
         started = true
+        this.onBatch = onBatch
+    }
+
+    suspend fun emitBatch() {
+        onBatch?.invoke(listOf(byteArrayOf(1, 2, 3)))
     }
 
     override suspend fun stopCapture() {
@@ -125,3 +225,7 @@ private class FakeAudioEngine : AudioEngine {
 
     override suspend fun stopPlayback() = Unit
 }
+
+private fun claimExpiry(expiresAtMs: Long): ByteArray = ByteBuffer.allocate(Long.SIZE_BYTES).putLong(expiresAtMs).array()
+
+private fun audioPayload(): ByteArray = byteArrayOf(1, 0, 3, 1, 2, 3)
