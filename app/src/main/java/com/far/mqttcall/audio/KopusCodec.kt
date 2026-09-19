@@ -55,7 +55,7 @@ class KopusCodec : OpusCodec {
         const val SAMPLE_RATE = 16_000
         const val CHANNELS = 1
         const val FRAME_SAMPLES = 320
-        const val BITRATE = 24_000
+        const val BITRATE = 16_000
         const val MAX_PACKET_BYTES = 1_275
     }
 }

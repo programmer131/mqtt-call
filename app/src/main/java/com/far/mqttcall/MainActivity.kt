@@ -2,6 +2,7 @@ package com.far.mqttcall
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.media.AudioManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -25,6 +26,8 @@ import com.far.mqttcall.ui.MqttCallTheme
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Playback uses the media stream, so hardware volume keys should adjust it.
+        volumeControlStream = AudioManager.STREAM_MUSIC
         setContent {
             val callViewModel: CallViewModel = viewModel(
                 factory = CallViewModelFactory(applicationContext),
@@ -66,7 +69,7 @@ private class CallViewModelFactory(
     override fun <T : ViewModel> create(modelClass: Class<T>): T = CallViewModel(
         transport = PahoMqttTransport(),
         cryptoEngine = AndroidCryptoEngine(context),
-        audioEngine = AndroidAudioEngine(),
+        audioEngine = AndroidAudioEngine(context),
         settingsStore = AndroidCallSettingsStore(context),
     ) as T
 }
