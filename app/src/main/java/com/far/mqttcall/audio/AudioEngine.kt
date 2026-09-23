@@ -22,6 +22,13 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+internal fun applyInputGain(samples: ShortArray, gain: Float): ShortArray =
+    ShortArray(samples.size) { index ->
+        (samples[index] * gain).toInt()
+            .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+            .toShort()
+    }
+
 class AudioBatcher(private val codec: OpusCodec) {
     private val frames = ArrayList<ByteArray>(FRAMES_PER_BATCH)
 
@@ -97,7 +104,8 @@ class AndroidAudioEngine(
                 while (currentCoroutineContext().isActive) {
                     val read = audioRecord.read(pcm, 0, pcm.size, AudioRecord.READ_BLOCKING)
                     if (read == FRAME_SAMPLES) {
-                        val batch = batcher.addFrame(pcm.copyOf())
+                        val frame = pcm.copyOf()
+                        val batch = batcher.addFrame(applyInputGain(frame, INPUT_GAIN))
                         if (batch != null) onBatch(batch)
                     }
                 }
@@ -191,7 +199,8 @@ class AndroidAudioEngine(
 
     private companion object {
         const val SAMPLE_RATE = 16_000
-        const val PLAYBACK_GAIN_MB = 1_500
+        const val PLAYBACK_GAIN_MB = 3_000
+        const val INPUT_GAIN = 2.0f
         const val FRAME_SAMPLES = 320
         const val BYTES_PER_SAMPLE = 2
     }
