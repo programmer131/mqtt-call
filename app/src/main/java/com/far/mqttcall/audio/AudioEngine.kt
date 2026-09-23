@@ -22,6 +22,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+internal const val PLAYBACK_GAIN_MB = 3_000
+
 internal fun applyInputGain(samples: ShortArray, gain: Float): ShortArray =
     ShortArray(samples.size) { index ->
         (samples[index] * gain).toInt()
@@ -199,7 +201,6 @@ class AndroidAudioEngine(
 
     private companion object {
         const val SAMPLE_RATE = 16_000
-        const val PLAYBACK_GAIN_MB = 3_000
         const val INPUT_GAIN = 2.0f
         const val FRAME_SAMPLES = 320
         const val BYTES_PER_SAMPLE = 2
