@@ -183,7 +183,10 @@ fun CallScreen(
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TextButton(onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(state.key)) }) { Text("Copy active") }
-                        TextButton(onClick = { onAction(CallAction.ResetDefaults) }) { Text("Reset") }
+                        TextButton(
+                            onClick = { onAction(CallAction.ResetDefaults) },
+                            enabled = !connected,
+                        ) { Text("Reset") }
                     }
                     Text(
                         "Encryption: ${securityLabel(state.securityLevel)}",

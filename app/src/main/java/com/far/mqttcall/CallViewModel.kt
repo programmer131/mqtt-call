@@ -226,6 +226,7 @@ class CallViewModel(
     }
 
     private fun resetDefaults() {
+        if (!canEditKeys()) return
         val defaults = SavedCallSettings(
             broker = AppDefaults.defaultBroker,
             channel = AppDefaults.defaultChannel,
