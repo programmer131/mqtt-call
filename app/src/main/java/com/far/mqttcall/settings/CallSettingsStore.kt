@@ -69,6 +69,10 @@ class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
             tls = preferences.getBoolean(KEY_BROKER_TLS, AppDefaults.defaultBroker.tls),
             username = preferences.getString(KEY_BROKER_USERNAME, null),
             password = preferences.getString(KEY_BROKER_PASSWORD, null),
+            audioPacketIntervalUnits = preferences.getInt(
+                KEY_AUDIO_PACKET_INTERVAL_UNITS,
+                AppDefaults.defaultBroker.audioPacketIntervalUnits,
+            ),
         )
         val encryptedKey = preferences.getString(KEY_ENCRYPTED_KEY, null)
         val key = encryptedKey?.let(::decryptKey) ?: AppDefaults.defaultKey
@@ -89,6 +93,7 @@ class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
             .putBoolean(KEY_BROKER_TLS, settings.broker.tls)
             .putString(KEY_BROKER_USERNAME, settings.broker.username)
             .putString(KEY_BROKER_PASSWORD, settings.broker.password)
+            .putInt(KEY_AUDIO_PACKET_INTERVAL_UNITS, settings.broker.audioPacketIntervalUnits)
             .putString(KEY_CHANNEL, settings.channel)
             .putString(KEY_ENCRYPTED_KEY, encryptKey(settings.key))
             .apply()
@@ -157,6 +162,7 @@ class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
         const val KEY_BROKER_TLS = "broker_tls"
         const val KEY_BROKER_USERNAME = "broker_username"
         const val KEY_BROKER_PASSWORD = "broker_password"
+        const val KEY_AUDIO_PACKET_INTERVAL_UNITS = "audio_packet_interval_units"
         const val KEY_KEEP_CONNECTED = "keep_connected"
         const val KEY_MICROPHONE_PERMISSION_PROMPTED = "microphone_permission_prompted"
         const val KEY_CHANNEL = "channel"

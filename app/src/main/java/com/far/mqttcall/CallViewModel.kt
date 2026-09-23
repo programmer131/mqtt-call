@@ -122,6 +122,7 @@ class CallViewModel(
     }
 
     override fun onCleared() {
+        audioEngine.stopCaptureImmediately()
         scope.cancel()
         super.onCleared()
     }
@@ -217,7 +218,7 @@ class CallViewModel(
                 runCatching {
                     publishControl(CONTROL_CLAIM)
                     log("PTT claim published")
-                    audioEngine.startCapture { frames ->
+                    audioEngine.startCapture(state.broker.audioPacketIntervalUnits) { frames ->
                         if (!floor.renewLocal(sessionId, clockMs() + TALK_LEASE_MS)) {
                             log("Audio batch dropped: local floor lost")
                             return@startCapture
@@ -430,7 +431,7 @@ class CallViewModel(
         const val CONTROL_RELEASE: Byte = 2
         const val CONTROL_QOS = 1
         const val AUDIO_QOS = 0
-        const val MAX_FRAMES_PER_BATCH = 10
+        const val MAX_FRAMES_PER_BATCH = 50
         const val FLOOR_WATCH_INTERVAL_MS = 200L
         const val LOG_TAG = "MqttCall"
     }

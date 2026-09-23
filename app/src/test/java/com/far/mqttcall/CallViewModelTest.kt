@@ -12,6 +12,7 @@ import java.nio.ByteBuffer
 import com.far.mqttcall.settings.InMemoryCallSettingsStore
 import com.far.mqttcall.transport.MqttEvent
 import com.far.mqttcall.transport.MqttTransport
+import androidx.lifecycle.ViewModelStore
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -99,6 +100,21 @@ class CallViewModelTest {
         advanceUntilIdle()
 
         assertEquals(2, fixture.transport.published.size)
+        assertTrue(fixture.audio.stopped)
+    }
+
+    @Test
+    fun `clearing the view model stops an active capture`() = runTest {
+        val fixture = Fixture()
+        fixture.connectWithMicrophone()
+        fixture.viewModel.dispatch(CallAction.PressTalk)
+        advanceUntilIdle()
+
+        val store = ViewModelStore()
+        store.put("call", fixture.viewModel)
+        store.clear()
+        advanceUntilIdle()
+
         assertTrue(fixture.audio.stopped)
     }
 
@@ -208,7 +224,10 @@ private class FakeAudioEngine : AudioEngine {
 
     private var onBatch: (suspend (List<ByteArray>) -> Unit)? = null
 
-    override suspend fun startCapture(onBatch: suspend (List<ByteArray>) -> Unit) {
+    override suspend fun startCapture(
+        audioPacketIntervalUnits: Int,
+        onBatch: suspend (List<ByteArray>) -> Unit,
+    ) {
         started = true
         this.onBatch = onBatch
     }
@@ -218,6 +237,10 @@ private class FakeAudioEngine : AudioEngine {
     }
 
     override suspend fun stopCapture() {
+        stopped = true
+    }
+
+    override fun stopCaptureImmediately() {
         stopped = true
     }
 

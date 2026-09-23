@@ -6,6 +6,9 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertNotEquals
 import org.junit.Test
+import java.nio.charset.StandardCharsets
+import javax.crypto.SecretKeyFactory
+import javax.crypto.spec.PBEKeySpec
 
 class CryptoEngineTest {
     private val jvmCrypto = JvmCryptoEngine()
@@ -49,6 +52,25 @@ class CryptoEngineTest {
 
         assertArrayEquals(byteArrayOf(4, 5), receiver.decrypt(packet)!!.plaintext)
         assertNull(receiver.decrypt(packet))
+    }
+
+    @Test
+    fun `PBKDF2 HMAC SHA256 fallback matches the standard provider`() {
+        val password = "shared".toCharArray()
+        val salt = "mqtt-ptt-v1/3344".toByteArray(StandardCharsets.UTF_8)
+        val spec = PBEKeySpec(password, salt, KDF_ITERATIONS, DERIVED_KEY_BITS)
+        val expected = try {
+            SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+                .generateSecret(spec)
+                .encoded
+        } finally {
+            spec.clearPassword()
+        }
+
+        assertArrayEquals(
+            expected,
+            derivePbkdf2HmacSha256Fallback(password, salt, KDF_ITERATIONS, DERIVED_KEY_BITS),
+        )
     }
 
     private fun testHeader(kind: PacketKind, sequence: Long): PacketHeader = PacketHeader(

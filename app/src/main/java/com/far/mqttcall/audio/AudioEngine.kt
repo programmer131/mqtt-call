@@ -31,26 +31,42 @@ internal fun applyInputGain(samples: ShortArray, gain: Float): ShortArray =
             .toShort()
     }
 
-class AudioBatcher(private val codec: OpusCodec) {
-    private val frames = ArrayList<ByteArray>(FRAMES_PER_BATCH)
+class AudioBatcher(
+    private val codec: OpusCodec,
+    private val framesPerBatch: Int = DEFAULT_FRAMES_PER_BATCH,
+) {
+    private val frames = ArrayList<ByteArray>(framesPerBatch)
+
+    init {
+        require(framesPerBatch > 0) { "Audio batch must contain at least one frame" }
+    }
 
     fun addFrame(frame: ShortArray): List<ByteArray>? {
         require(frame.size == FRAME_SAMPLES) { "Audio frame must contain 320 samples" }
         frames += codec.encode(frame)
-        if (frames.size < FRAMES_PER_BATCH) return null
+        if (frames.size < framesPerBatch) return null
         return frames.toList().also { frames.clear() }
     }
 
-    private companion object {
+    companion object {
+        private const val DEFAULT_FRAMES_PER_BATCH = 10
         const val FRAME_SAMPLES = 320
-        const val FRAMES_PER_BATCH = 10
+        private const val FRAMES_PER_100MS = 5
+
+        fun framesForInterval(audioPacketIntervalUnits: Int): Int =
+            audioPacketIntervalUnits * FRAMES_PER_100MS
     }
 }
 
 interface AudioEngine {
-    suspend fun startCapture(onBatch: suspend (List<ByteArray>) -> Unit)
+    suspend fun startCapture(
+        audioPacketIntervalUnits: Int,
+        onBatch: suspend (List<ByteArray>) -> Unit,
+    )
 
     suspend fun stopCapture()
+
+    fun stopCaptureImmediately()
 
     suspend fun play(batch: AudioBatch)
 
@@ -68,12 +84,15 @@ class AndroidAudioEngine(
     private var playbackCodec: OpusCodec? = null
     private var loudness: LoudnessEnhancer? = null
 
-    override suspend fun startCapture(onBatch: suspend (List<ByteArray>) -> Unit) {
+    override suspend fun startCapture(
+        audioPacketIntervalUnits: Int,
+        onBatch: suspend (List<ByteArray>) -> Unit,
+    ) {
         stopCapture()
         captureJob = scope.launch(Dispatchers.IO) {
             Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
             val codec = codecFactory()
-            val batcher = AudioBatcher(codec)
+            val batcher = AudioBatcher(codec, AudioBatcher.framesForInterval(audioPacketIntervalUnits))
             val bufferSize = maxOf(
                 AudioRecord.getMinBufferSize(
                     SAMPLE_RATE,
@@ -129,6 +148,11 @@ class AndroidAudioEngine(
         captureJob?.cancelAndJoin()
         captureJob = null
         recorder = null
+    }
+
+    override fun stopCaptureImmediately() {
+        captureJob?.cancel()
+        runCatching { recorder?.stop() }
     }
 
     override suspend fun play(batch: AudioBatch) = withContext(Dispatchers.IO) {

@@ -22,6 +22,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -30,6 +31,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -56,6 +59,7 @@ import com.far.mqttcall.crypto.SecurityLevel
 import com.far.mqttcall.domain.defaultBrokerProfiles
 import com.far.mqttcall.floor.TalkState
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CallScreen(
     state: CallUiState,
@@ -68,143 +72,167 @@ fun CallScreen(
     val connected = state.connection == ConnectionState.CONNECTED
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Text("MQTT Call", style = MaterialTheme.typography.headlineMedium)
-            Text(
-                "Private push-to-talk over any MQTT broker",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("MQTT Call") },
+                )
+            },
+        ) { innerPadding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(innerPadding)
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                PttButton(
+                    state = state,
+                    onAction = onAction,
+                    requestMicrophone = requestMicrophone,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(190.dp),
+                )
 
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Connection", style = MaterialTheme.typography.titleMedium)
-                    Box {
-                        OutlinedButton(
-                            onClick = { brokerMenuOpen = true },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) { Text(state.broker.name) }
-                        DropdownMenu(
-                            expanded = brokerMenuOpen,
-                            onDismissRequest = { brokerMenuOpen = false },
-                        ) {
-                            brokerProfiles.forEach { broker ->
-                                DropdownMenuItem(
-                                    text = { Text(broker.name) },
-                                    onClick = {
-                                        brokerMenuOpen = false
-                                        onAction(CallAction.SelectBroker(broker))
-                                    },
-                                )
+                Text(
+                    "Private push-to-talk over any MQTT broker",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("Connection", style = MaterialTheme.typography.titleMedium)
+                        Box {
+                            OutlinedButton(
+                                onClick = { brokerMenuOpen = true },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text(state.broker.name) }
+                            DropdownMenu(
+                                expanded = brokerMenuOpen,
+                                onDismissRequest = { brokerMenuOpen = false },
+                            ) {
+                                brokerProfiles.forEach { broker ->
+                                    DropdownMenuItem(
+                                        text = { Text(broker.name) },
+                                        onClick = {
+                                            brokerMenuOpen = false
+                                            onAction(CallAction.SelectBroker(broker))
+                                        },
+                                    )
+                                }
                             }
                         }
-                    }
-                    Text("${state.broker.host}:${state.broker.port}", style = MaterialTheme.typography.bodySmall)
-                    Text(
-                        "Public test brokers are shared and may be unavailable. Use TLS and a unique key for anything sensitive.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Button(
-                            onClick = { onAction(if (connected) CallAction.Disconnect else CallAction.Connect) },
-                            modifier = Modifier.weight(1f),
-                        ) { Text(if (connected) "Disconnect" else "Connect") }
-                        StatusPill(connectionLabel(state.connection), connected)
-                    }
-                }
-            }
-
-            Card {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Channel security", style = MaterialTheme.typography.titleMedium)
-                    OutlinedTextField(
-                        value = state.channel,
-                        onValueChange = { onAction(CallAction.UpdateChannel(it)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Channel number") },
-                        supportingText = { Text("Topic: ${state.topic.ifEmpty { "invalid channel" }}") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                    )
-                    OutlinedTextField(
-                        value = state.key,
-                        onValueChange = { onAction(CallAction.UpdateKey(it)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Encryption key") },
-                        visualTransformation = PasswordVisualTransformation(),
-                        singleLine = true,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = { onAction(CallAction.GenerateKey) }) { Text("Generate") }
-                        TextButton(onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(state.key)) }) {
-                            Text("Copy")
+                        Text("${state.broker.host}:${state.broker.port}", style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            "Public test brokers are shared and may be unavailable. Use TLS and a unique key for anything sensitive.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Button(
+                                onClick = { onAction(if (connected) CallAction.Disconnect else CallAction.Connect) },
+                                modifier = Modifier.weight(1f),
+                            ) { Text(if (connected) "Disconnect" else "Connect") }
+                            StatusPill(connectionLabel(state.connection), connected)
                         }
-                        TextButton(onClick = { onAction(CallAction.ResetDefaults) }) { Text("Reset") }
-                    }
-                    Text(
-                        "Encryption: ${securityLabel(state.securityLevel)}",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-            }
-
-            Card {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Call status", style = MaterialTheme.typography.titleMedium)
-                    Text("Talk: ${state.talkState.name.lowercase().replace('_', ' ')}")
-                    Text("Audio buffer: ${state.bufferState.name.lowercase()}")
-                    Text("Sent ${state.sentBatches} batches · received ${state.receivedBatches}")
-                    if (state.error != null) {
-                        Text(state.error, color = MaterialTheme.colorScheme.error)
                     }
                 }
-            }
 
-            val pttEnabled = state.canTalk || state.talkState == TalkState.LOCAL_TALKING
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(190.dp)
-                    .clip(CircleShape)
-                    .background(if (pttEnabled) MaterialTheme.colorScheme.primary else Color.Gray)
-                    .pointerInput(pttEnabled, state.microphoneGranted) {
-                        detectTapGestures(
-                            onPress = {
-                                if (!state.microphoneGranted) {
-                                    requestMicrophone()
-                                    return@detectTapGestures
-                                }
-                                if (!state.canTalk && state.talkState != TalkState.LOCAL_TALKING) return@detectTapGestures
-                                onAction(CallAction.PressTalk)
-                                try {
-                                    tryAwaitRelease()
-                                } finally {
-                                    onAction(CallAction.ReleaseTalk)
-                                }
-                            },
+                Card {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("Channel security", style = MaterialTheme.typography.titleMedium)
+                        OutlinedTextField(
+                            value = state.channel,
+                            onValueChange = { onAction(CallAction.UpdateChannel(it)) },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Channel number") },
+                            supportingText = { Text("Topic: ${state.topic.ifEmpty { "invalid channel" }}") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                        )
+                        OutlinedTextField(
+                            value = state.key,
+                            onValueChange = { onAction(CallAction.UpdateKey(it)) },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Encryption key") },
+                            visualTransformation = PasswordVisualTransformation(),
+                            singleLine = true,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { onAction(CallAction.GenerateKey) }) { Text("Generate") }
+                            TextButton(onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(state.key)) }) {
+                                Text("Copy")
+                            }
+                            TextButton(onClick = { onAction(CallAction.ResetDefaults) }) { Text("Reset") }
+                        }
+                        Text(
+                            "Encryption: ${securityLabel(state.securityLevel)}",
+                            style = MaterialTheme.typography.bodySmall,
                         )
                     }
-                    .semantics {
-                        role = Role.Button
-                        contentDescription = "Push to talk"
+                }
+
+                Card {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Call status", style = MaterialTheme.typography.titleMedium)
+                        Text("Talk: ${state.talkState.name.lowercase().replace('_', ' ')}")
+                        Text("Audio buffer: ${state.bufferState.name.lowercase()}")
+                        Text("Sent ${state.sentBatches} batches · received ${state.receivedBatches}")
+                        if (state.error != null) {
+                            Text(state.error, color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                }
+                Spacer(Modifier.size(4.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun PttButton(
+    state: CallUiState,
+    onAction: (CallAction) -> Unit,
+    requestMicrophone: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val pttEnabled = state.canTalk || state.talkState == TalkState.LOCAL_TALKING
+
+    Box(
+        modifier = modifier
+            .clip(CircleShape)
+            .background(if (pttEnabled) MaterialTheme.colorScheme.primary else Color.Gray)
+            .pointerInput(pttEnabled, state.microphoneGranted) {
+                detectTapGestures(
+                    onPress = {
+                        if (!state.microphoneGranted) {
+                            requestMicrophone()
+                            return@detectTapGestures
+                        }
+                        if (!state.canTalk && state.talkState != TalkState.LOCAL_TALKING) return@detectTapGestures
+                        onAction(CallAction.PressTalk)
+                        try {
+                            tryAwaitRelease()
+                        } finally {
+                            onAction(CallAction.ReleaseTalk)
+                        }
                     },
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    if (state.talkState == TalkState.LOCAL_TALKING) "RELEASE TO STOP" else "PUSH TO TALK",
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleLarge,
                 )
             }
-            Spacer(Modifier.size(4.dp))
-        }
+            .semantics {
+                role = Role.Button
+                contentDescription = "Push to talk"
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            if (state.talkState == TalkState.LOCAL_TALKING) "RELEASE TO STOP" else "PUSH TO TALK",
+            color = Color.White,
+            style = MaterialTheme.typography.titleLarge,
+        )
     }
 }
 
