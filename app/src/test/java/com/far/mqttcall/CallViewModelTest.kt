@@ -39,6 +39,32 @@ class CallViewModelTest {
     }
 
     @Test
+    fun `selecting a broker persists it immediately`() = runTest {
+        val fixture = Fixture()
+        val custom = BrokerProfile("Doorbell", "192.168.1.107", 1883, false)
+
+        fixture.viewModel.dispatch(CallAction.SaveBroker(custom))
+
+        assertEquals(custom, fixture.viewModel.uiState.value.broker)
+        assertEquals(listOf(custom), fixture.viewModel.uiState.value.savedBrokers)
+        assertEquals(custom, fixture.settings.load().broker)
+        assertEquals(listOf(custom), fixture.settings.load().savedBrokers)
+    }
+
+    @Test
+    fun `saved broker is restored by a new view model`() = runTest {
+        val settings = InMemoryCallSettingsStore()
+        val custom = BrokerProfile("Doorbell", "192.168.1.107", 1883, false)
+        val first = Fixture(settings)
+        first.viewModel.dispatch(CallAction.SaveBroker(custom))
+
+        val second = Fixture(settings)
+
+        assertEquals(custom, second.viewModel.uiState.value.broker)
+        assertEquals(listOf(custom), second.viewModel.uiState.value.savedBrokers)
+    }
+
+    @Test
     fun `generate key changes only the key`() = runTest {
         val fixture = Fixture()
         fixture.viewModel.dispatch(CallAction.GenerateKey)
@@ -175,11 +201,12 @@ class CallViewModelTest {
         assertTrue(fixture.viewModel.uiState.value.canTalk)
     }
 
-    private class Fixture {
+    private class Fixture(
+        val settings: InMemoryCallSettingsStore = InMemoryCallSettingsStore(),
+    ) {
         var nowMs = 0L
         val transport = FakeTransport()
         val audio = FakeAudioEngine()
-        val settings = InMemoryCallSettingsStore()
         val viewModel = CallViewModel(
             transport = transport,
             cryptoEngine = JvmCryptoEngine(),
@@ -189,6 +216,7 @@ class CallViewModelTest {
             clockMs = { nowMs },
             scope = CoroutineScope(Dispatchers.Unconfined + SupervisorJob()),
         )
+
         private val peer = JvmCryptoEngine().prepare(AppDefaults.defaultChannel, AppDefaults.defaultKey.toCharArray())
 
         suspend fun connectWithMicrophone() {

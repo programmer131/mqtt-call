@@ -1,6 +1,7 @@
 package com.far.mqttcall.settings
 
 import com.far.mqttcall.domain.AppDefaults
+import com.far.mqttcall.domain.BrokerProfile
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -28,5 +29,22 @@ class KeySlotSettingsTest {
         assertEquals(0, settings.activeKeyIndex)
         assertEquals(AppDefaults.defaultKey, settings.activeKey)
         assertEquals(3, settings.keySlots.size)
+    }
+
+    @Test
+    fun `saved broker profiles survive persistence`() {
+        val store = InMemoryCallSettingsStore()
+        val custom = BrokerProfile("Doorbell", "192.168.1.107", 1883, false)
+        val settings = SavedCallSettings(
+            broker = custom,
+            channel = AppDefaults.defaultChannel,
+            keySlots = AppDefaults.defaultKeySlots,
+            savedBrokers = listOf(custom),
+        )
+
+        store.save(settings)
+
+        assertEquals(listOf(custom), store.load().savedBrokers)
+        assertEquals(custom, store.load().broker)
     }
 }

@@ -20,6 +20,8 @@ The first demo uses these shared defaults on every install:
 
 Public brokers are for testing only. Topics and traffic metadata are public, and availability is not guaranteed; audio packets are encrypted by the app.
 
+In the Android app, open the broker menu to choose a preset or use **Add broker** for a private host, LAN address, port, TLS setting, and optional credentials. Custom broker profiles are stored on the device, and the last selected profile is restored automatically when the app starts.
+
 ## Build
 
 ```bash

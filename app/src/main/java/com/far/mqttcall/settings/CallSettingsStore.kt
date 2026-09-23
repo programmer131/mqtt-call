@@ -20,6 +20,7 @@ data class SavedCallSettings(
     val channel: String,
     val keySlots: List<String>,
     val activeKeyIndex: Int = 0,
+    val savedBrokers: List<BrokerProfile> = emptyList(),
 ) {
     init {
         require(keySlots.size == KEY_SLOT_COUNT) { "Exactly three key slots are required" }
@@ -71,11 +72,12 @@ class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
             channel = preferences.getString(KEY_CHANNEL, AppDefaults.defaultChannel)!!,
             keySlots = keySlots,
             activeKeyIndex = preferences.getInt(KEY_ACTIVE_KEY_INDEX, 0).coerceIn(0, KEY_SLOT_COUNT - 1),
+            savedBrokers = loadSavedBrokers(),
         )
     }
 
     override fun save(settings: SavedCallSettings) {
-        preferences.edit()
+        val editor = preferences.edit()
             .putString(KEY_BROKER_NAME, settings.broker.name)
             .putString(KEY_BROKER_HOST, settings.broker.host)
             .putInt(KEY_BROKER_PORT, settings.broker.port)
@@ -85,13 +87,49 @@ class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
             .putString(KEY_CHANNEL, settings.channel)
             .putString(KEY_ENCRYPTED_KEY, encryptKey(settings.keySlots.first()))
             .putInt(KEY_ACTIVE_KEY_INDEX, settings.activeKeyIndex)
-            .also { editor ->
-                settings.keySlots.forEachIndexed { index, key ->
-                    editor.putString(encryptedKeySlot(index), encryptKey(key))
-                }
-            }
-            .apply()
+        settings.keySlots.forEachIndexed { index, key ->
+            editor.putString(encryptedKeySlot(index), encryptKey(key))
+        }
+
+        val previousBrokerCount = preferences.getInt(KEY_SAVED_BROKER_COUNT, 0)
+        repeat(maxOf(previousBrokerCount, settings.savedBrokers.size)) { index ->
+            brokerField(index, "name").also(editor::remove)
+            brokerField(index, "host").also(editor::remove)
+            brokerField(index, "port").also(editor::remove)
+            brokerField(index, "tls").also(editor::remove)
+            brokerField(index, "username").also(editor::remove)
+            brokerField(index, "password").also(editor::remove)
+        }
+        editor.putInt(KEY_SAVED_BROKER_COUNT, settings.savedBrokers.size)
+        settings.savedBrokers.forEachIndexed { index, broker ->
+            editor.putString(brokerField(index, "name"), broker.name)
+            editor.putString(brokerField(index, "host"), broker.host)
+            editor.putInt(brokerField(index, "port"), broker.port)
+            editor.putBoolean(brokerField(index, "tls"), broker.tls)
+            editor.putString(brokerField(index, "username"), broker.username)
+            editor.putString(brokerField(index, "password"), broker.password)
+        }
+        editor.apply()
     }
+
+    private fun loadSavedBrokers(): List<BrokerProfile> {
+        val count = preferences.getInt(KEY_SAVED_BROKER_COUNT, 0).coerceIn(0, MAX_SAVED_BROKERS)
+        return (0 until count).mapNotNull { index ->
+            val host = preferences.getString(brokerField(index, "host"), null)?.trim()
+                ?.takeIf(String::isNotEmpty)
+                ?: return@mapNotNull null
+            BrokerProfile(
+                name = preferences.getString(brokerField(index, "name"), host) ?: host,
+                host = host,
+                port = preferences.getInt(brokerField(index, "port"), 1883),
+                tls = preferences.getBoolean(brokerField(index, "tls"), false),
+                username = preferences.getString(brokerField(index, "username"), null),
+                password = preferences.getString(brokerField(index, "password"), null),
+            )
+        }
+    }
+
+    private fun brokerField(index: Int, field: String): String = "$KEY_SAVED_BROKER_PREFIX$index$FIELD_SEPARATOR$field"
 
     private fun encryptKey(value: String): String {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
@@ -152,6 +190,10 @@ class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
         const val KEY_ENCRYPTED_KEY = "encrypted_key"
         const val KEY_ACTIVE_KEY_INDEX = "active_key_index"
         const val KEY_ENCRYPTED_KEY_SLOT_PREFIX = "encrypted_key_slot_"
+        const val KEY_SAVED_BROKER_COUNT = "saved_broker_count"
+        const val KEY_SAVED_BROKER_PREFIX = "saved_broker_"
+        const val FIELD_SEPARATOR = "_"
+        const val MAX_SAVED_BROKERS = 20
     }
 
     private fun encryptedKeySlot(index: Int): String = KEY_ENCRYPTED_KEY_SLOT_PREFIX + index

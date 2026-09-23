@@ -20,6 +20,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -28,6 +29,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -54,6 +56,7 @@ import com.far.mqttcall.CallUiState
 import com.far.mqttcall.ConnectionState
 import com.far.mqttcall.crypto.SecurityLevel
 import com.far.mqttcall.domain.defaultBrokerProfiles
+import com.far.mqttcall.domain.BrokerProfile
 import com.far.mqttcall.floor.TalkState
 
 @Composable
@@ -63,8 +66,17 @@ fun CallScreen(
     requestMicrophone: () -> Unit,
 ) {
     var brokerMenuOpen by remember { mutableStateOf(false) }
+    var addBrokerOpen by remember { mutableStateOf(false) }
+    var brokerName by remember { mutableStateOf("") }
+    var brokerHost by remember { mutableStateOf("") }
+    var brokerPort by remember { mutableStateOf("1883") }
+    var brokerTls by remember { mutableStateOf(false) }
+    var brokerUsername by remember { mutableStateOf("") }
+    var brokerPassword by remember { mutableStateOf("") }
     val clipboard = LocalClipboardManager.current
-    val brokerProfiles = remember { defaultBrokerProfiles() }
+    val brokerProfiles = remember(state.savedBrokers) {
+        (defaultBrokerProfiles() + state.savedBrokers).distinct()
+    }
     val connected = state.connection == ConnectionState.CONNECTED
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -105,6 +117,18 @@ fun CallScreen(
                             }
                         }
                     }
+                    OutlinedButton(
+                        onClick = {
+                            brokerName = ""
+                            brokerHost = ""
+                            brokerPort = "1883"
+                            brokerTls = false
+                            brokerUsername = ""
+                            brokerPassword = ""
+                            addBrokerOpen = true
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Add broker") }
                     Text("${state.broker.host}:${state.broker.port}", style = MaterialTheme.typography.bodySmall)
                     Text(
                         "Public test brokers are shared and may be unavailable. Use TLS and a unique key for anything sensitive.",
@@ -245,6 +269,84 @@ fun CallScreen(
             }
             Spacer(Modifier.size(4.dp))
         }
+    }
+
+    if (addBrokerOpen) {
+        val parsedPort = brokerPort.toIntOrNull()
+        AlertDialog(
+            onDismissRequest = { addBrokerOpen = false },
+            title = { Text("Add MQTT broker") },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        "This broker is saved on this device and selected automatically next time.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    OutlinedTextField(
+                        value = brokerName,
+                        onValueChange = { brokerName = it },
+                        label = { Text("Name") },
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = brokerHost,
+                        onValueChange = { brokerHost = it },
+                        label = { Text("Host or IP address") },
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = brokerPort,
+                        onValueChange = { brokerPort = it.filter(Char::isDigit) },
+                        label = { Text("Port") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Use TLS", modifier = Modifier.weight(1f))
+                        Switch(checked = brokerTls, onCheckedChange = { brokerTls = it })
+                    }
+                    OutlinedTextField(
+                        value = brokerUsername,
+                        onValueChange = { brokerUsername = it },
+                        label = { Text("Username (optional)") },
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = brokerPassword,
+                        onValueChange = { brokerPassword = it },
+                        label = { Text("Password (optional)") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = brokerHost.isNotBlank() && parsedPort in 1..65535,
+                    onClick = {
+                        onAction(
+                            CallAction.SaveBroker(
+                                BrokerProfile(
+                                    name = brokerName,
+                                    host = brokerHost,
+                                    port = parsedPort ?: 1883,
+                                    tls = brokerTls,
+                                    username = brokerUsername,
+                                    password = brokerPassword,
+                                ),
+                            ),
+                        )
+                        addBrokerOpen = false
+                    },
+                ) { Text("Save and select") }
+            },
+            dismissButton = {
+                TextButton(onClick = { addBrokerOpen = false }) { Text("Cancel") }
+            },
+        )
     }
 }
 

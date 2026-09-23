@@ -47,6 +47,7 @@ enum class ConnectionState {
 
 data class CallUiState(
     val broker: BrokerProfile = AppDefaults.defaultBroker,
+    val savedBrokers: List<BrokerProfile> = emptyList(),
     val channel: String = AppDefaults.defaultChannel,
     val keySlots: List<String> = AppDefaults.defaultKeySlots,
     val activeKeyIndex: Int = 0,
@@ -76,6 +77,7 @@ sealed interface CallAction {
     data object ReleaseTalk : CallAction
     data object RequestMicrophone : CallAction
     data class SelectBroker(val broker: BrokerProfile) : CallAction
+    data class SaveBroker(val broker: BrokerProfile) : CallAction
     data class UpdateChannel(val channel: String) : CallAction
     data class UpdateKey(val key: String) : CallAction
     data class UpdateKeySlot(val slotIndex: Int, val key: String) : CallAction
@@ -123,7 +125,8 @@ class CallViewModel(
                 update { copy(microphoneGranted = true) }
                 update { copy(canTalk = isConnectedAndFree()) }
             }
-            is CallAction.SelectBroker -> update { copy(broker = action.broker) }
+            is CallAction.SelectBroker -> selectBroker(action.broker)
+            is CallAction.SaveBroker -> saveBroker(action.broker)
             is CallAction.UpdateChannel -> updateChannel(action.channel)
             is CallAction.UpdateKey -> updateKeySlot(_uiState.value.activeKeyIndex, action.key)
             is CallAction.UpdateKeySlot -> updateKeySlot(action.slotIndex, action.key)
@@ -152,7 +155,15 @@ class CallViewModel(
             runCatching {
                 cryptoSession = cryptoEngine.prepare(state.channel, state.key.toCharArray())
                 transport.connect(state.broker, topic)
-                settingsStore.save(SavedCallSettings(state.broker, state.channel, state.keySlots, state.activeKeyIndex))
+                settingsStore.save(
+                    SavedCallSettings(
+                        broker = state.broker,
+                        channel = state.channel,
+                        keySlots = state.keySlots,
+                        activeKeyIndex = state.activeKeyIndex,
+                        savedBrokers = state.savedBrokers,
+                    ),
+                )
             }.onFailure { error ->
                 update {
                     copy(
@@ -222,7 +233,50 @@ class CallViewModel(
 
     private fun persistSettings() {
         val state = _uiState.value
-        settingsStore.save(SavedCallSettings(state.broker, state.channel, state.keySlots, state.activeKeyIndex))
+        settingsStore.save(
+            SavedCallSettings(
+                broker = state.broker,
+                channel = state.channel,
+                keySlots = state.keySlots,
+                activeKeyIndex = state.activeKeyIndex,
+                savedBrokers = state.savedBrokers,
+            ),
+        )
+    }
+
+    private fun selectBroker(broker: BrokerProfile) {
+        if (!canEditBroker()) return
+        update { copy(broker = broker, error = null) }
+        persistSettings()
+    }
+
+    private fun saveBroker(broker: BrokerProfile) {
+        if (!canEditBroker()) return
+        val normalized = broker.copy(
+            name = broker.name.trim().ifEmpty { broker.host.trim() },
+            host = broker.host.trim(),
+            username = broker.username?.trim()?.takeIf(String::isNotEmpty),
+            password = broker.password?.takeIf(String::isNotEmpty),
+        )
+        if (normalized.name.isBlank() || normalized.host.isBlank() || normalized.port !in 1..65535) {
+            update { copy(error = "Enter a broker name, host, and port from 1 to 65535") }
+            return
+        }
+        val saved = _uiState.value.savedBrokers
+            .filterNot { it.name.equals(normalized.name, ignoreCase = true) }
+            .plus(normalized)
+        update { copy(broker = normalized, savedBrokers = saved, error = null) }
+        persistSettings()
+    }
+
+    private fun canEditBroker(): Boolean {
+        if (_uiState.value.connection == ConnectionState.CONNECTED ||
+            _uiState.value.connection == ConnectionState.CONNECTING
+        ) {
+            update { copy(error = "Disconnect before changing brokers") }
+            return false
+        }
+        return true
     }
 
     private fun resetDefaults() {
@@ -232,6 +286,7 @@ class CallViewModel(
             channel = AppDefaults.defaultChannel,
             keySlots = AppDefaults.defaultKeySlots,
             activeKeyIndex = 0,
+            savedBrokers = _uiState.value.savedBrokers,
         )
         settingsStore.save(defaults)
         update {
@@ -467,6 +522,7 @@ class CallViewModel(
 
     private fun SavedCallSettings.toUiState(): CallUiState = CallUiState(
         broker = broker,
+        savedBrokers = savedBrokers,
         channel = channel,
         keySlots = keySlots,
         activeKeyIndex = activeKeyIndex,

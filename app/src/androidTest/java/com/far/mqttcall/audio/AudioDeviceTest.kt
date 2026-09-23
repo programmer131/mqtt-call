@@ -6,6 +6,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.far.mqttcall.crypto.AndroidCryptoEngine
 import com.far.mqttcall.domain.AppDefaults
+import com.far.mqttcall.domain.BrokerProfile
 import com.far.mqttcall.protocol.PacketHeader
 import com.far.mqttcall.protocol.PacketKind
 import com.far.mqttcall.settings.AndroidCallSettingsStore
@@ -70,10 +71,11 @@ class AudioDeviceTest {
         val store = AndroidCallSettingsStore(context)
         val original = store.load()
         val custom = SavedCallSettings(
-            original.broker,
+            BrokerProfile("Doorbell", "192.168.1.107", 1883, false),
             "9988",
             listOf("device-test-key", "spare-key-one", "spare-key-two"),
             activeKeyIndex = 1,
+            savedBrokers = listOf(BrokerProfile("Doorbell", "192.168.1.107", 1883, false)),
         )
         try {
             store.save(custom)
@@ -81,6 +83,8 @@ class AudioDeviceTest {
             assertEquals(custom.channel, loaded.channel)
             assertEquals(custom.keySlots, loaded.keySlots)
             assertEquals(custom.activeKeyIndex, loaded.activeKeyIndex)
+            assertEquals(custom.broker, loaded.broker)
+            assertEquals(custom.savedBrokers, loaded.savedBrokers)
             assertEquals("spare-key-one", loaded.activeKey)
         } finally {
             store.save(original)
