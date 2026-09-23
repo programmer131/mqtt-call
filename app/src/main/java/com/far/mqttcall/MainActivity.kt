@@ -1,58 +1,63 @@
 package com.far.mqttcall
 
 import android.Manifest
+import android.content.ComponentName
+import android.content.Intent
+import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.os.Bundle
+import android.os.IBinder
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.viewmodel.compose.viewModel
-import com.far.mqttcall.audio.AndroidAudioEngine
-import com.far.mqttcall.crypto.AndroidCryptoEngine
-import com.far.mqttcall.settings.AndroidCallSettingsStore
-import com.far.mqttcall.transport.PahoMqttTransport
+import com.far.mqttcall.floor.TalkState
 import com.far.mqttcall.ui.CallScreen
 import com.far.mqttcall.ui.MqttCallTheme
 
 class MainActivity : ComponentActivity() {
+    private var callBinder by mutableStateOf<CallService.LocalBinder?>(null)
+    private var bindRequested = false
+    private var exiting = false
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName, service: IBinder) {
+            if (exiting) return
+            callBinder = service as CallService.LocalBinder
+            syncMicrophonePermission()
+        }
+
+        override fun onServiceDisconnected(name: ComponentName) {
+            callBinder = null
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Playback uses the media stream, so hardware volume keys should adjust it.
         volumeControlStream = AudioManager.STREAM_MUSIC
         setContent {
-            val callViewModel: CallViewModel = viewModel(
-                factory = CallViewModelFactory(applicationContext),
-            )
-            val state by callViewModel.uiState.collectAsState()
+            val binder = callBinder
+            val state = binder?.uiState?.collectAsState()?.value ?: CallUiState()
             val microphoneLauncher = rememberLauncherForActivityResult(
                 ActivityResultContracts.RequestPermission(),
             ) { granted ->
-                if (granted) callViewModel.dispatch(CallAction.RequestMicrophone)
-            }
-            val microphoneGranted = remember {
-                ContextCompat.checkSelfPermission(
-                    this,
-                    Manifest.permission.RECORD_AUDIO,
-                ) == PackageManager.PERMISSION_GRANTED
-            }
-
-            LaunchedEffect(microphoneGranted) {
-                if (microphoneGranted) callViewModel.dispatch(CallAction.RequestMicrophone)
+                if (granted) {
+                    callBinder?.dispatch(CallAction.RequestMicrophone)
+                } else {
+                    callBinder?.dispatch(CallAction.MicrophonePermissionRevoked)
+                }
             }
 
             MqttCallTheme {
                 CallScreen(
                     state = state,
-                    onAction = callViewModel::dispatch,
+                    onAction = { action -> callBinder?.dispatch(action) },
                     requestMicrophone = {
                         microphoneLauncher.launch(Manifest.permission.RECORD_AUDIO)
                     },
@@ -60,16 +65,50 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-}
 
-private class CallViewModelFactory(
-    private val context: android.content.Context,
-) : ViewModelProvider.Factory {
-    @Suppress("UNCHECKED_CAST")
-    override fun <T : ViewModel> create(modelClass: Class<T>): T = CallViewModel(
-        transport = PahoMqttTransport(),
-        cryptoEngine = AndroidCryptoEngine(context),
-        audioEngine = AndroidAudioEngine(context),
-        settingsStore = AndroidCallSettingsStore(context),
-    ) as T
+    override fun onStart() {
+        super.onStart()
+        if (!exiting) {
+            ContextCompat.startForegroundService(this, Intent(this, CallService::class.java))
+            bindRequested = bindService(
+                Intent(this, CallService::class.java),
+                serviceConnection,
+                BIND_AUTO_CREATE,
+            )
+        }
+    }
+
+    override fun onStop() {
+        if (callBinder?.uiState?.value?.talkState == TalkState.LOCAL_TALKING) {
+            callBinder?.dispatch(CallAction.ReleaseTalk)
+        }
+        unbindCallService()
+        super.onStop()
+    }
+
+    private fun syncMicrophonePermission() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            callBinder?.dispatch(CallAction.RequestMicrophone)
+        } else {
+            callBinder?.dispatch(CallAction.MicrophonePermissionRevoked)
+        }
+    }
+
+    private fun unbindCallService() {
+        if (bindRequested) {
+            unbindService(serviceConnection)
+            bindRequested = false
+        }
+        callBinder = null
+    }
+
+    private fun exitCall() {
+        if (exiting) return
+        exiting = true
+        callBinder?.dispatch(CallAction.Disconnect)
+        unbindCallService()
+        finishAndRemoveTask()
+    }
 }

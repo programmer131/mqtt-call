@@ -77,6 +77,7 @@ sealed interface CallAction {
     data object PressTalk : CallAction
     data object ReleaseTalk : CallAction
     data object RequestMicrophone : CallAction
+    data object MicrophonePermissionRevoked : CallAction
     data class SelectBroker(val broker: BrokerProfile) : CallAction
     data class SaveBroker(val broker: BrokerProfile) : CallAction
     data class UpdateChannel(val channel: String) : CallAction
@@ -126,6 +127,10 @@ class CallViewModel(
                 update { copy(microphoneGranted = true) }
                 update { copy(canTalk = isConnectedAndFree()) }
             }
+            CallAction.MicrophonePermissionRevoked -> {
+                update { copy(microphoneGranted = false, canTalk = false) }
+                if (_uiState.value.talkState == TalkState.LOCAL_TALKING) releaseTalk()
+            }
             is CallAction.SelectBroker -> selectBroker(action.broker)
             is CallAction.SaveBroker -> saveBroker(action.broker)
             is CallAction.UpdateChannel -> updateChannel(action.channel)
@@ -135,6 +140,7 @@ class CallViewModel(
     }
 
     override fun onCleared() {
+        audioEngine.stopCaptureImmediately()
         scope.cancel()
         super.onCleared()
     }
@@ -152,6 +158,7 @@ class CallViewModel(
         }
 
         update { copy(connection = ConnectionState.CONNECTING, error = null) }
+        settingsStore.setKeepConnected(true)
         scope.launch {
             runCatching {
                 cryptoSession = cryptoEngine.prepare(state.channel, state.key.toCharArray())
@@ -178,6 +185,7 @@ class CallViewModel(
     }
 
     private fun disconnect() {
+        settingsStore.setKeepConnected(false)
         scope.launch {
             releaseTalkNow()
             transport.disconnect()

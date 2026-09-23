@@ -288,6 +288,10 @@ private class FakeAudioEngine : AudioEngine {
         stopped = true
     }
 
+    override fun stopCaptureImmediately() {
+        stopped = true
+    }
+
     override suspend fun play(batch: AudioBatch) = Unit
 
     override suspend fun stopPlayback() = Unit

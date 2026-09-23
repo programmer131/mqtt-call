@@ -22,13 +22,16 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-internal const val MICROPHONE_GAIN = 8
+internal const val MICROPHONE_GAIN = 8f
+internal const val PLAYBACK_GAIN_MB = 3_000
 
-internal fun boostPcm(samples: ShortArray): ShortArray = ShortArray(samples.size) { index ->
-    (samples[index].toInt() * MICROPHONE_GAIN)
+internal fun applyInputGain(samples: ShortArray, gain: Float): ShortArray = ShortArray(samples.size) { index ->
+    (samples[index] * gain).toInt()
         .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
         .toShort()
 }
+
+internal fun boostPcm(samples: ShortArray): ShortArray = applyInputGain(samples, MICROPHONE_GAIN)
 
 class AudioBatcher(
     private val codec: OpusCodec,
@@ -64,6 +67,8 @@ interface AudioEngine {
     )
 
     suspend fun stopCapture()
+
+    fun stopCaptureImmediately()
 
     suspend fun play(batch: AudioBatch)
 
@@ -148,6 +153,11 @@ class AndroidAudioEngine(
         recorder = null
     }
 
+    override fun stopCaptureImmediately() {
+        captureJob?.cancel()
+        runCatching { recorder?.stop() }
+    }
+
     override suspend fun play(batch: AudioBatch) = withContext(Dispatchers.IO) {
         val audioTrack = ensureTrack()
         // Opus decoding is stateful across frames, so one decoder serves the whole stream.
@@ -218,7 +228,6 @@ class AndroidAudioEngine(
 
     private companion object {
         const val SAMPLE_RATE = 16_000
-        const val PLAYBACK_GAIN_MB = 1_500
         const val FRAME_SAMPLES = 320
         const val BYTES_PER_SAMPLE = 2
     }

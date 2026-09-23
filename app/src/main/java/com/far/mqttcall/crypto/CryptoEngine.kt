@@ -5,12 +5,15 @@ import com.far.mqttcall.protocol.PacketCodec
 import com.far.mqttcall.protocol.PacketHeader
 import java.nio.charset.StandardCharsets
 import java.security.GeneralSecurityException
+import java.security.NoSuchAlgorithmException
 import java.security.SecureRandom
 import javax.crypto.Cipher
+import javax.crypto.Mac
 import javax.crypto.SecretKey
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.PBEKeySpec
+import javax.crypto.spec.SecretKeySpec
 
 enum class SecurityLevel {
     STRONGBOX,
@@ -37,12 +40,68 @@ internal fun deriveChannelKey(channel: String, passphrase: CharArray): SecretKey
     val salt = "mqtt-ptt-v1/$channel".toByteArray(StandardCharsets.UTF_8)
     val spec = PBEKeySpec(passphrase, salt, KDF_ITERATIONS, DERIVED_KEY_BITS)
     return try {
-        val bytes = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-            .generateSecret(spec)
-            .encoded
-        javax.crypto.spec.SecretKeySpec(bytes, "AES")
+        val bytes = try {
+            SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+                .generateSecret(spec)
+                .encoded
+        } catch (_: NoSuchAlgorithmException) {
+            derivePbkdf2HmacSha256Fallback(
+                passphrase,
+                salt,
+                KDF_ITERATIONS,
+                DERIVED_KEY_BITS,
+            )
+        }
+        SecretKeySpec(bytes, "AES")
     } finally {
         spec.clearPassword()
+    }
+}
+
+internal fun derivePbkdf2HmacSha256Fallback(
+    password: CharArray,
+    salt: ByteArray,
+    iterations: Int,
+    keyBits: Int,
+): ByteArray {
+    require(iterations > 0) { "PBKDF2 requires at least one iteration" }
+    require(keyBits > 0 && keyBits % 8 == 0) { "PBKDF2 key length must be a positive byte multiple" }
+
+    val passwordBytes = password.concatToString().toByteArray(StandardCharsets.UTF_8)
+    return try {
+        val mac = Mac.getInstance("HmacSHA256").apply {
+            init(SecretKeySpec(passwordBytes, "HmacSHA256"))
+        }
+        val keyLength = keyBits / 8
+        val blockLength = mac.macLength
+        val blockCount = (keyLength + blockLength - 1) / blockLength
+        val result = ByteArray(keyLength)
+        val input = ByteArray(salt.size + 4)
+        salt.copyInto(input)
+        var resultOffset = 0
+
+        for (blockIndex in 1..blockCount) {
+            input[salt.size] = (blockIndex ushr 24).toByte()
+            input[salt.size + 1] = (blockIndex ushr 16).toByte()
+            input[salt.size + 2] = (blockIndex ushr 8).toByte()
+            input[salt.size + 3] = blockIndex.toByte()
+
+            var u = mac.doFinal(input)
+            val xorResult = u.copyOf()
+            repeat(iterations - 1) {
+                u = mac.doFinal(u)
+                xorResult.indices.forEach { index ->
+                    xorResult[index] = (xorResult[index].toInt() xor u[index].toInt()).toByte()
+                }
+            }
+
+            val copyLength = minOf(xorResult.size, result.size - resultOffset)
+            xorResult.copyInto(result, resultOffset, endIndex = copyLength)
+            resultOffset += copyLength
+        }
+        result
+    } finally {
+        passwordBytes.fill(0)
     }
 }
 

@@ -22,6 +22,8 @@ data class SavedCallSettings(
     val keySlots: List<String>,
     val activeKeyIndex: Int = 0,
     val savedBrokers: List<BrokerProfile> = emptyList(),
+    val keepConnected: Boolean = false,
+    val microphonePermissionPrompted: Boolean = false,
 ) {
     init {
         require(keySlots.size == KEY_SLOT_COUNT) { "Exactly three key slots are required" }
@@ -35,6 +37,10 @@ interface CallSettingsStore {
     fun load(): SavedCallSettings
 
     fun save(settings: SavedCallSettings)
+
+    fun setKeepConnected(keepConnected: Boolean)
+
+    fun markMicrophonePermissionPrompted()
 }
 
 class InMemoryCallSettingsStore(
@@ -47,7 +53,18 @@ class InMemoryCallSettingsStore(
     override fun load(): SavedCallSettings = current
 
     override fun save(settings: SavedCallSettings) {
-        current = settings
+        current = settings.copy(
+            keepConnected = current.keepConnected,
+            microphonePermissionPrompted = current.microphonePermissionPrompted,
+        )
+    }
+
+    override fun setKeepConnected(keepConnected: Boolean) {
+        current = current.copy(keepConnected = keepConnected)
+    }
+
+    override fun markMicrophonePermissionPrompted() {
+        current = current.copy(microphonePermissionPrompted = true)
     }
 }
 
@@ -79,6 +96,8 @@ class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
             keySlots = keySlots,
             activeKeyIndex = preferences.getInt(KEY_ACTIVE_KEY_INDEX, 0).coerceIn(0, KEY_SLOT_COUNT - 1),
             savedBrokers = loadSavedBrokers(),
+            keepConnected = preferences.getBoolean(KEY_KEEP_CONNECTED, false),
+            microphonePermissionPrompted = preferences.getBoolean(KEY_MICROPHONE_PERMISSION_PROMPTED, false),
         )
     }
 
@@ -119,6 +138,14 @@ class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
             editor.putInt(brokerField(index, "audio_packet_interval_units"), broker.audioPacketIntervalUnits)
         }
         editor.apply()
+    }
+
+    override fun setKeepConnected(keepConnected: Boolean) {
+        preferences.edit().putBoolean(KEY_KEEP_CONNECTED, keepConnected).apply()
+    }
+
+    override fun markMicrophonePermissionPrompted() {
+        preferences.edit().putBoolean(KEY_MICROPHONE_PERMISSION_PROMPTED, true).apply()
     }
 
     private fun loadSavedBrokers(): List<BrokerProfile> {
@@ -203,6 +230,8 @@ class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
         const val KEY_CHANNEL = "channel"
         const val KEY_ENCRYPTED_KEY = "encrypted_key"
         const val KEY_ACTIVE_KEY_INDEX = "active_key_index"
+        const val KEY_KEEP_CONNECTED = "keep_connected"
+        const val KEY_MICROPHONE_PERMISSION_PROMPTED = "microphone_permission_prompted"
         const val KEY_ENCRYPTED_KEY_SLOT_PREFIX = "encrypted_key_slot_"
         const val KEY_SAVED_BROKER_COUNT = "saved_broker_count"
         const val KEY_SAVED_BROKER_PREFIX = "saved_broker_"
