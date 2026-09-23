@@ -48,6 +48,23 @@ class CallViewModelTest {
     }
 
     @Test
+    fun `inactive key slot can be generated and activated persistently`() = runTest {
+        val fixture = Fixture()
+        fixture.viewModel.dispatch(CallAction.GenerateKeySlot(1))
+
+        val generated = fixture.viewModel.uiState.value.keySlots[1]
+        assertTrue(generated.startsWith("PTT-"))
+        assertEquals(AppDefaults.defaultKey, fixture.viewModel.uiState.value.key)
+        assertEquals(generated, fixture.settings.load().keySlots[1])
+
+        fixture.viewModel.dispatch(CallAction.ActivateKey(1))
+
+        assertEquals(1, fixture.viewModel.uiState.value.activeKeyIndex)
+        assertEquals(generated, fixture.viewModel.uiState.value.key)
+        assertEquals(1, fixture.settings.load().activeKeyIndex)
+    }
+
+    @Test
     fun `connect does not enable ptt until transport subscription succeeds`() = runTest {
         val fixture = Fixture()
         fixture.viewModel.dispatch(CallAction.Connect)
@@ -162,11 +179,12 @@ class CallViewModelTest {
         var nowMs = 0L
         val transport = FakeTransport()
         val audio = FakeAudioEngine()
+        val settings = InMemoryCallSettingsStore()
         val viewModel = CallViewModel(
             transport = transport,
             cryptoEngine = JvmCryptoEngine(),
             audioEngine = audio,
-            settingsStore = InMemoryCallSettingsStore(),
+            settingsStore = settings,
             sessionId = ByteArray(16) { 1 },
             clockMs = { nowMs },
             scope = CoroutineScope(Dispatchers.Unconfined + SupervisorJob()),

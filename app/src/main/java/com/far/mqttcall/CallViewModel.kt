@@ -16,6 +16,7 @@ import com.far.mqttcall.domain.defaultBrokerProfiles
 import com.far.mqttcall.floor.TalkFloor
 import com.far.mqttcall.floor.TalkState
 import com.far.mqttcall.settings.CallSettingsStore
+import com.far.mqttcall.settings.KEY_SLOT_COUNT
 import com.far.mqttcall.settings.SavedCallSettings
 import com.far.mqttcall.transport.MqttEvent
 import com.far.mqttcall.transport.MqttTransport
@@ -47,7 +48,8 @@ enum class ConnectionState {
 data class CallUiState(
     val broker: BrokerProfile = AppDefaults.defaultBroker,
     val channel: String = AppDefaults.defaultChannel,
-    val key: String = AppDefaults.defaultKey,
+    val keySlots: List<String> = AppDefaults.defaultKeySlots,
+    val activeKeyIndex: Int = 0,
     val topic: String = topicFor(AppDefaults.defaultChannel),
     val connection: ConnectionState = ConnectionState.DISCONNECTED,
     val talkState: TalkState = TalkState.IDLE,
@@ -60,12 +62,15 @@ data class CallUiState(
     val receivedBatches: Long = 0,
 ) {
     val isConnected: Boolean get() = connection == ConnectionState.CONNECTED
+    val key: String get() = keySlots[activeKeyIndex]
 }
 
 sealed interface CallAction {
     data object Connect : CallAction
     data object Disconnect : CallAction
     data object GenerateKey : CallAction
+    data class GenerateKeySlot(val slotIndex: Int) : CallAction
+    data class ActivateKey(val slotIndex: Int) : CallAction
     data object ResetDefaults : CallAction
     data object PressTalk : CallAction
     data object ReleaseTalk : CallAction
@@ -73,6 +78,7 @@ sealed interface CallAction {
     data class SelectBroker(val broker: BrokerProfile) : CallAction
     data class UpdateChannel(val channel: String) : CallAction
     data class UpdateKey(val key: String) : CallAction
+    data class UpdateKeySlot(val slotIndex: Int, val key: String) : CallAction
 }
 
 class CallViewModel(
@@ -108,6 +114,8 @@ class CallViewModel(
             CallAction.Connect -> connect()
             CallAction.Disconnect -> disconnect()
             CallAction.GenerateKey -> generateKey()
+            is CallAction.GenerateKeySlot -> generateKey(action.slotIndex)
+            is CallAction.ActivateKey -> activateKey(action.slotIndex)
             CallAction.ResetDefaults -> resetDefaults()
             CallAction.PressTalk -> pressTalk()
             CallAction.ReleaseTalk -> releaseTalk()
@@ -117,7 +125,8 @@ class CallViewModel(
             }
             is CallAction.SelectBroker -> update { copy(broker = action.broker) }
             is CallAction.UpdateChannel -> updateChannel(action.channel)
-            is CallAction.UpdateKey -> update { copy(key = action.key) }
+            is CallAction.UpdateKey -> updateKeySlot(_uiState.value.activeKeyIndex, action.key)
+            is CallAction.UpdateKeySlot -> updateKeySlot(action.slotIndex, action.key)
         }
     }
 
@@ -143,7 +152,7 @@ class CallViewModel(
             runCatching {
                 cryptoSession = cryptoEngine.prepare(state.channel, state.key.toCharArray())
                 transport.connect(state.broker, topic)
-                settingsStore.save(SavedCallSettings(state.broker, state.channel, state.key))
+                settingsStore.save(SavedCallSettings(state.broker, state.channel, state.keySlots, state.activeKeyIndex))
             }.onFailure { error ->
                 update {
                     copy(
@@ -173,15 +182,55 @@ class CallViewModel(
     }
 
     private fun generateKey() {
+        generateKey(_uiState.value.activeKeyIndex)
+    }
+
+    private fun generateKey(slotIndex: Int) {
+        if (!canEditKeys()) return
         val bytes = ByteArray(12).also(random::nextBytes)
-        update { copy(key = "PTT-" + bytes.joinToString("") { "%02X".format(it) }) }
+        updateKeySlot(slotIndex, "PTT-" + bytes.joinToString("") { "%02X".format(it) })
+    }
+
+    private fun activateKey(slotIndex: Int) {
+        if (!canEditKeys()) return
+        if (slotIndex !in 0 until KEY_SLOT_COUNT) return
+        if (_uiState.value.keySlots[slotIndex].isBlank()) {
+            update { copy(error = "Generate or enter a key before activating it") }
+            return
+        }
+        update { copy(activeKeyIndex = slotIndex, error = null) }
+        persistSettings()
+    }
+
+    private fun updateKeySlot(slotIndex: Int, key: String) {
+        if (!canEditKeys() || slotIndex !in 0 until KEY_SLOT_COUNT) return
+        val slots = _uiState.value.keySlots.toMutableList()
+        slots[slotIndex] = key
+        update { copy(keySlots = slots, error = null) }
+        persistSettings()
+    }
+
+    private fun canEditKeys(): Boolean {
+        if (_uiState.value.connection == ConnectionState.CONNECTED ||
+            _uiState.value.connection == ConnectionState.CONNECTING
+        ) {
+            update { copy(error = "Disconnect before changing encryption keys") }
+            return false
+        }
+        return true
+    }
+
+    private fun persistSettings() {
+        val state = _uiState.value
+        settingsStore.save(SavedCallSettings(state.broker, state.channel, state.keySlots, state.activeKeyIndex))
     }
 
     private fun resetDefaults() {
         val defaults = SavedCallSettings(
             broker = AppDefaults.defaultBroker,
             channel = AppDefaults.defaultChannel,
-            key = AppDefaults.defaultKey,
+            keySlots = AppDefaults.defaultKeySlots,
+            activeKeyIndex = 0,
         )
         settingsStore.save(defaults)
         update {
@@ -418,7 +467,8 @@ class CallViewModel(
     private fun SavedCallSettings.toUiState(): CallUiState = CallUiState(
         broker = broker,
         channel = channel,
-        key = key,
+        keySlots = keySlots,
+        activeKeyIndex = activeKeyIndex,
         topic = topicFor(channel),
     )
 

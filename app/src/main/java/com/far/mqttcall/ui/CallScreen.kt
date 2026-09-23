@@ -133,19 +133,56 @@ fun CallScreen(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
                     )
-                    OutlinedTextField(
-                        value = state.key,
-                        onValueChange = { onAction(CallAction.UpdateKey(it)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Encryption key") },
-                        visualTransformation = PasswordVisualTransformation(),
-                        singleLine = true,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = { onAction(CallAction.GenerateKey) }) { Text("Generate") }
-                        TextButton(onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(state.key)) }) {
-                            Text("Copy")
+                    Text("Saved encryption keys", style = MaterialTheme.typography.titleSmall)
+                    state.keySlots.forEachIndexed { index, key ->
+                        val active = state.activeKeyIndex == index
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (active) {
+                                    MaterialTheme.colorScheme.primaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceVariant
+                                },
+                            ),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(start = 10.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                OutlinedTextField(
+                                    value = key,
+                                    onValueChange = { onAction(CallAction.UpdateKeySlot(index, it)) },
+                                    modifier = Modifier.weight(1f),
+                                    label = { Text(if (index == 0) "Default shared key" else "Saved key ${index + 1}") },
+                                    visualTransformation = PasswordVisualTransformation(),
+                                    enabled = !connected,
+                                    singleLine = true,
+                                )
+                                IconButton(
+                                    onClick = { onAction(CallAction.GenerateKeySlot(index)) },
+                                    enabled = !connected,
+                                    modifier = Modifier.semantics { contentDescription = "Regenerate key ${index + 1}" },
+                                ) {
+                                    Text("↻", style = MaterialTheme.typography.titleLarge)
+                                }
+                                if (active) {
+                                    Text(
+                                        "ACTIVE",
+                                        color = MaterialTheme.colorScheme.primary,
+                                        style = MaterialTheme.typography.labelSmall,
+                                    )
+                                } else {
+                                    TextButton(
+                                        onClick = { onAction(CallAction.ActivateKey(index)) },
+                                        enabled = !connected && key.isNotBlank(),
+                                    ) { Text("Use") }
+                                }
+                            }
                         }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(state.key)) }) { Text("Copy active") }
                         TextButton(onClick = { onAction(CallAction.ResetDefaults) }) { Text("Reset") }
                     }
                     Text(

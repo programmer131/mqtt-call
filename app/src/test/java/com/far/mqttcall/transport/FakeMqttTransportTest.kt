@@ -38,14 +38,14 @@ class FakeMqttTransportTest {
     fun `settings load defaults and preserves custom broker channel and key`() {
         val store = InMemoryCallSettingsStore()
         assertEquals(
-            SavedCallSettings(AppDefaults.defaultBroker, "3344", "PTT-DEMO-3344"),
+            SavedCallSettings(AppDefaults.defaultBroker, "3344", AppDefaults.defaultKeySlots),
             store.load(),
         )
 
         val custom = SavedCallSettings(
             broker = BrokerProfile("Custom", "localhost", 1883, false),
             channel = "99",
-            key = "share-me",
+            keySlots = listOf("share-me", "", ""),
         )
         store.save(custom)
 

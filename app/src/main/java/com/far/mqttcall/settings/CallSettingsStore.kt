@@ -18,8 +18,16 @@ import javax.crypto.spec.GCMParameterSpec
 data class SavedCallSettings(
     val broker: BrokerProfile,
     val channel: String,
-    val key: String,
-)
+    val keySlots: List<String>,
+    val activeKeyIndex: Int = 0,
+) {
+    init {
+        require(keySlots.size == KEY_SLOT_COUNT) { "Exactly three key slots are required" }
+        require(activeKeyIndex in keySlots.indices) { "Active key slot is out of range" }
+    }
+
+    val activeKey: String get() = keySlots[activeKeyIndex]
+}
 
 interface CallSettingsStore {
     fun load(): SavedCallSettings
@@ -31,7 +39,7 @@ class InMemoryCallSettingsStore(
     private var current: SavedCallSettings = SavedCallSettings(
         broker = AppDefaults.defaultBroker,
         channel = AppDefaults.defaultChannel,
-        key = AppDefaults.defaultKey,
+        keySlots = AppDefaults.defaultKeySlots,
     ),
 ) : CallSettingsStore {
     override fun load(): SavedCallSettings = current
@@ -53,12 +61,16 @@ class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
             username = preferences.getString(KEY_BROKER_USERNAME, null),
             password = preferences.getString(KEY_BROKER_PASSWORD, null),
         )
-        val encryptedKey = preferences.getString(KEY_ENCRYPTED_KEY, null)
-        val key = encryptedKey?.let(::decryptKey) ?: AppDefaults.defaultKey
+        val legacyKey = preferences.getString(KEY_ENCRYPTED_KEY, null)?.let(::decryptKey)
+        val keySlots = List(KEY_SLOT_COUNT) { index ->
+            preferences.getString(encryptedKeySlot(index), null)?.let(::decryptKey)
+                ?: if (index == 0) legacyKey ?: AppDefaults.defaultKey else ""
+        }
         return SavedCallSettings(
             broker = broker,
             channel = preferences.getString(KEY_CHANNEL, AppDefaults.defaultChannel)!!,
-            key = key,
+            keySlots = keySlots,
+            activeKeyIndex = preferences.getInt(KEY_ACTIVE_KEY_INDEX, 0).coerceIn(0, KEY_SLOT_COUNT - 1),
         )
     }
 
@@ -71,7 +83,13 @@ class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
             .putString(KEY_BROKER_USERNAME, settings.broker.username)
             .putString(KEY_BROKER_PASSWORD, settings.broker.password)
             .putString(KEY_CHANNEL, settings.channel)
-            .putString(KEY_ENCRYPTED_KEY, encryptKey(settings.key))
+            .putString(KEY_ENCRYPTED_KEY, encryptKey(settings.keySlots.first()))
+            .putInt(KEY_ACTIVE_KEY_INDEX, settings.activeKeyIndex)
+            .also { editor ->
+                settings.keySlots.forEachIndexed { index, key ->
+                    editor.putString(encryptedKeySlot(index), encryptKey(key))
+                }
+            }
             .apply()
     }
 
@@ -132,5 +150,11 @@ class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
         const val KEY_BROKER_PASSWORD = "broker_password"
         const val KEY_CHANNEL = "channel"
         const val KEY_ENCRYPTED_KEY = "encrypted_key"
+        const val KEY_ACTIVE_KEY_INDEX = "active_key_index"
+        const val KEY_ENCRYPTED_KEY_SLOT_PREFIX = "encrypted_key_slot_"
     }
+
+    private fun encryptedKeySlot(index: Int): String = KEY_ENCRYPTED_KEY_SLOT_PREFIX + index
 }
+
+const val KEY_SLOT_COUNT = 3

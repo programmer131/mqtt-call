@@ -69,12 +69,19 @@ class AudioDeviceTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val store = AndroidCallSettingsStore(context)
         val original = store.load()
-        val custom = SavedCallSettings(original.broker, "9988", "device-test-key")
+        val custom = SavedCallSettings(
+            original.broker,
+            "9988",
+            listOf("device-test-key", "spare-key-one", "spare-key-two"),
+            activeKeyIndex = 1,
+        )
         try {
             store.save(custom)
             val loaded = store.load()
             assertEquals(custom.channel, loaded.channel)
-            assertEquals(custom.key, loaded.key)
+            assertEquals(custom.keySlots, loaded.keySlots)
+            assertEquals(custom.activeKeyIndex, loaded.activeKeyIndex)
+            assertEquals("spare-key-one", loaded.activeKey)
         } finally {
             store.save(original)
         }
