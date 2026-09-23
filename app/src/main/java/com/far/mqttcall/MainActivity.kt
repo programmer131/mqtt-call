@@ -13,13 +13,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.collectAsState
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.far.mqttcall.audio.AndroidAudioEngine
-import com.far.mqttcall.crypto.AndroidCryptoEngine
-import com.far.mqttcall.settings.AndroidCallSettingsStore
-import com.far.mqttcall.transport.PahoMqttTransport
 import com.far.mqttcall.ui.CallScreen
 import com.far.mqttcall.ui.MqttCallTheme
 
@@ -60,16 +54,4 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-}
-
-private class CallViewModelFactory(
-    private val context: android.content.Context,
-) : ViewModelProvider.Factory {
-    @Suppress("UNCHECKED_CAST")
-    override fun <T : ViewModel> create(modelClass: Class<T>): T = CallViewModel(
-        transport = PahoMqttTransport(),
-        cryptoEngine = AndroidCryptoEngine(context),
-        audioEngine = AndroidAudioEngine(context),
-        settingsStore = AndroidCallSettingsStore(context),
-    ) as T
 }
