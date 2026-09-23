@@ -13,7 +13,7 @@ HEADER_SIZE = 34
 TAG_SIZE = 16
 CHANNEL_DEFAULT = "3344"
 KEY_DEFAULT = "PTT-DEMO-3344"
-MAX_FRAMES = 10
+MAX_FRAMES = 50
 
 
 @dataclass(frozen=True)
@@ -75,4 +75,3 @@ def decode_audio_batch(data: bytes) -> list[bytes] | None:
         frames.append(data[pos : pos + size])
         pos += size
     return frames if pos == len(data) else None
-

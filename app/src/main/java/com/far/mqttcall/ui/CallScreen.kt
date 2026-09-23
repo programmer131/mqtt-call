@@ -129,7 +129,10 @@ fun CallScreen(
                         },
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("Add broker") }
-                    Text("${state.broker.host}:${state.broker.port}", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "${state.broker.host}:${state.broker.port} · ${state.broker.audioPacketIntervalUnits * 100} ms packets",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                     Text(
                         "Public test brokers are shared and may be unavailable. Use TLS and a unique key for anything sensitive.",
                         style = MaterialTheme.typography.bodySmall,

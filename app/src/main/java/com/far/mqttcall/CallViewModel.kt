@@ -12,6 +12,7 @@ import com.far.mqttcall.crypto.SecurityLevel
 import com.far.mqttcall.domain.AppDefaults
 import com.far.mqttcall.domain.BrokerProfile
 import com.far.mqttcall.domain.channelTopic
+import com.far.mqttcall.domain.defaultAudioPacketIntervalUnits
 import com.far.mqttcall.domain.defaultBrokerProfiles
 import com.far.mqttcall.floor.TalkFloor
 import com.far.mqttcall.floor.TalkState
@@ -257,6 +258,7 @@ class CallViewModel(
             host = broker.host.trim(),
             username = broker.username?.trim()?.takeIf(String::isNotEmpty),
             password = broker.password?.takeIf(String::isNotEmpty),
+            audioPacketIntervalUnits = defaultAudioPacketIntervalUnits(broker.host),
         )
         if (normalized.name.isBlank() || normalized.host.isBlank() || normalized.port !in 1..65535) {
             update { copy(error = "Enter a broker name, host, and port from 1 to 65535") }
@@ -322,7 +324,7 @@ class CallViewModel(
                 runCatching {
                     publishControl(CONTROL_CLAIM)
                     log("PTT claim published")
-                    audioEngine.startCapture { frames ->
+                        audioEngine.startCapture(state.broker.audioPacketIntervalUnits) { frames ->
                         if (!floor.renewLocal(sessionId, clockMs() + TALK_LEASE_MS)) {
                             log("Audio batch dropped: local floor lost")
                             return@startCapture
@@ -537,7 +539,7 @@ class CallViewModel(
         const val CONTROL_RELEASE: Byte = 2
         const val CONTROL_QOS = 1
         const val AUDIO_QOS = 0
-        const val MAX_FRAMES_PER_BATCH = 10
+        const val MAX_FRAMES_PER_BATCH = 50
         const val FLOOR_WATCH_INTERVAL_MS = 200L
         const val LOG_TAG = "MqttCall"
     }

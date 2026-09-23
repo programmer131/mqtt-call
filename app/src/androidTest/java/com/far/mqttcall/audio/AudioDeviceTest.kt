@@ -70,12 +70,13 @@ class AudioDeviceTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val store = AndroidCallSettingsStore(context)
         val original = store.load()
+        val customBroker = BrokerProfile("Doorbell", "192.168.1.107", 1883, false, audioPacketIntervalUnits = 1)
         val custom = SavedCallSettings(
-            BrokerProfile("Doorbell", "192.168.1.107", 1883, false),
+            customBroker,
             "9988",
             listOf("device-test-key", "spare-key-one", "spare-key-two"),
             activeKeyIndex = 1,
-            savedBrokers = listOf(BrokerProfile("Doorbell", "192.168.1.107", 1883, false)),
+            savedBrokers = listOf(customBroker),
         )
         try {
             store.save(custom)

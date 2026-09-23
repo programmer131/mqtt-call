@@ -48,6 +48,14 @@ class ProtocolTest(unittest.TestCase):
         self.assertIsNone(decode_audio_batch(blob + b"extra"))
         self.assertIsNone(decode_audio_batch(bytes([1, 0, 4]) + b"x"))
 
+    def test_internet_batch_can_contain_twenty_frames(self):
+        frames = [bytes([index]) for index in range(20)]
+        blob = bytes([len(frames)]) + b"".join(
+            struct.pack(">H", len(frame)) + frame for frame in frames
+        )
+
+        self.assertEqual(decode_audio_batch(blob), frames)
+
 
 if __name__ == "__main__":
     unittest.main()

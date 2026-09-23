@@ -10,6 +10,7 @@ import com.far.mqttcall.protocol.PacketHeader
 import com.far.mqttcall.protocol.PacketKind
 import java.nio.ByteBuffer
 import com.far.mqttcall.settings.InMemoryCallSettingsStore
+import com.far.mqttcall.settings.SavedCallSettings
 import com.far.mqttcall.transport.MqttEvent
 import com.far.mqttcall.transport.MqttTransport
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -41,7 +42,7 @@ class CallViewModelTest {
     @Test
     fun `selecting a broker persists it immediately`() = runTest {
         val fixture = Fixture()
-        val custom = BrokerProfile("Doorbell", "192.168.1.107", 1883, false)
+        val custom = BrokerProfile("Doorbell", "192.168.1.107", 1883, false, audioPacketIntervalUnits = 1)
 
         fixture.viewModel.dispatch(CallAction.SaveBroker(custom))
 
@@ -54,7 +55,7 @@ class CallViewModelTest {
     @Test
     fun `saved broker is restored by a new view model`() = runTest {
         val settings = InMemoryCallSettingsStore()
-        val custom = BrokerProfile("Doorbell", "192.168.1.107", 1883, false)
+        val custom = BrokerProfile("Doorbell", "192.168.1.107", 1883, false, audioPacketIntervalUnits = 1)
         val first = Fixture(settings)
         first.viewModel.dispatch(CallAction.SaveBroker(custom))
 
@@ -88,6 +89,21 @@ class CallViewModelTest {
         assertEquals(1, fixture.viewModel.uiState.value.activeKeyIndex)
         assertEquals(generated, fixture.viewModel.uiState.value.key)
         assertEquals(1, fixture.settings.load().activeKeyIndex)
+    }
+
+    @Test
+    fun `selected LAN broker uses the high packet frequency`() = runTest {
+        val broker = BrokerProfile("DietPi LAN", "192.168.1.107", 1886, false, audioPacketIntervalUnits = 1)
+        val settings = InMemoryCallSettingsStore(
+            SavedCallSettings(broker, AppDefaults.defaultChannel, AppDefaults.defaultKeySlots),
+        )
+        val fixture = Fixture(settings)
+        fixture.connectWithMicrophone()
+
+        fixture.viewModel.dispatch(CallAction.PressTalk)
+        advanceUntilIdle()
+
+        assertEquals(1, fixture.audio.captureIntervalUnits)
     }
 
     @Test
@@ -251,11 +267,16 @@ private class FakeTransport : MqttTransport {
 private class FakeAudioEngine : AudioEngine {
     var started = false
     var stopped = false
+    var captureIntervalUnits: Int? = null
 
     private var onBatch: (suspend (List<ByteArray>) -> Unit)? = null
 
-    override suspend fun startCapture(onBatch: suspend (List<ByteArray>) -> Unit) {
+    override suspend fun startCapture(
+        audioPacketIntervalUnits: Int,
+        onBatch: suspend (List<ByteArray>) -> Unit,
+    ) {
         started = true
+        captureIntervalUnits = audioPacketIntervalUnits
         this.onBatch = onBatch
     }
 

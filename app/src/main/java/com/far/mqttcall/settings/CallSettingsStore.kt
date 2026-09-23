@@ -8,6 +8,7 @@ import android.security.keystore.StrongBoxUnavailableException
 import android.util.Base64
 import com.far.mqttcall.domain.AppDefaults
 import com.far.mqttcall.domain.BrokerProfile
+import com.far.mqttcall.domain.defaultAudioPacketIntervalUnits
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
 import javax.crypto.Cipher
@@ -54,13 +55,18 @@ class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
     private val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
 
     override fun load(): SavedCallSettings {
+        val brokerHost = preferences.getString(KEY_BROKER_HOST, AppDefaults.defaultBroker.host)!!
         val broker = BrokerProfile(
             name = preferences.getString(KEY_BROKER_NAME, AppDefaults.defaultBroker.name)!!,
-            host = preferences.getString(KEY_BROKER_HOST, AppDefaults.defaultBroker.host)!!,
+            host = brokerHost,
             port = preferences.getInt(KEY_BROKER_PORT, AppDefaults.defaultBroker.port),
             tls = preferences.getBoolean(KEY_BROKER_TLS, AppDefaults.defaultBroker.tls),
             username = preferences.getString(KEY_BROKER_USERNAME, null),
             password = preferences.getString(KEY_BROKER_PASSWORD, null),
+            audioPacketIntervalUnits = preferences.getInt(
+                KEY_AUDIO_PACKET_INTERVAL_UNITS,
+                defaultAudioPacketIntervalUnits(brokerHost),
+            ),
         )
         val legacyKey = preferences.getString(KEY_ENCRYPTED_KEY, null)?.let(::decryptKey)
         val keySlots = List(KEY_SLOT_COUNT) { index ->
@@ -84,6 +90,7 @@ class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
             .putBoolean(KEY_BROKER_TLS, settings.broker.tls)
             .putString(KEY_BROKER_USERNAME, settings.broker.username)
             .putString(KEY_BROKER_PASSWORD, settings.broker.password)
+            .putInt(KEY_AUDIO_PACKET_INTERVAL_UNITS, settings.broker.audioPacketIntervalUnits)
             .putString(KEY_CHANNEL, settings.channel)
             .putString(KEY_ENCRYPTED_KEY, encryptKey(settings.keySlots.first()))
             .putInt(KEY_ACTIVE_KEY_INDEX, settings.activeKeyIndex)
@@ -99,6 +106,7 @@ class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
             brokerField(index, "tls").also(editor::remove)
             brokerField(index, "username").also(editor::remove)
             brokerField(index, "password").also(editor::remove)
+            brokerField(index, "audio_packet_interval_units").also(editor::remove)
         }
         editor.putInt(KEY_SAVED_BROKER_COUNT, settings.savedBrokers.size)
         settings.savedBrokers.forEachIndexed { index, broker ->
@@ -108,6 +116,7 @@ class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
             editor.putBoolean(brokerField(index, "tls"), broker.tls)
             editor.putString(brokerField(index, "username"), broker.username)
             editor.putString(brokerField(index, "password"), broker.password)
+            editor.putInt(brokerField(index, "audio_packet_interval_units"), broker.audioPacketIntervalUnits)
         }
         editor.apply()
     }
@@ -125,6 +134,10 @@ class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
                 tls = preferences.getBoolean(brokerField(index, "tls"), false),
                 username = preferences.getString(brokerField(index, "username"), null),
                 password = preferences.getString(brokerField(index, "password"), null),
+                audioPacketIntervalUnits = preferences.getInt(
+                    brokerField(index, "audio_packet_interval_units"),
+                    defaultAudioPacketIntervalUnits(host),
+                ),
             )
         }
     }
@@ -186,6 +199,7 @@ class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
         const val KEY_BROKER_TLS = "broker_tls"
         const val KEY_BROKER_USERNAME = "broker_username"
         const val KEY_BROKER_PASSWORD = "broker_password"
+        const val KEY_AUDIO_PACKET_INTERVAL_UNITS = "audio_packet_interval_units"
         const val KEY_CHANNEL = "channel"
         const val KEY_ENCRYPTED_KEY = "encrypted_key"
         const val KEY_ACTIVE_KEY_INDEX = "active_key_index"

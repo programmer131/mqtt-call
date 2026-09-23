@@ -34,7 +34,7 @@ class KeySlotSettingsTest {
     @Test
     fun `saved broker profiles survive persistence`() {
         val store = InMemoryCallSettingsStore()
-        val custom = BrokerProfile("Doorbell", "192.168.1.107", 1883, false)
+        val custom = BrokerProfile("Doorbell", "192.168.1.107", 1883, false, audioPacketIntervalUnits = 1)
         val settings = SavedCallSettings(
             broker = custom,
             channel = AppDefaults.defaultChannel,

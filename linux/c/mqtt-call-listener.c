@@ -16,7 +16,7 @@
 #define TAG_SIZE 16
 #define NONCE_SIZE 12
 #define SESSION_SIZE 16
-#define MAX_FRAMES 10
+#define MAX_FRAMES 50
 #define FRAME_SAMPLES 320
 #define SAMPLE_RATE 16000
 #define STARTUP_BATCHES 3
