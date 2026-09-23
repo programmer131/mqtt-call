@@ -70,6 +70,7 @@ sealed interface CallAction {
     data object PressTalk : CallAction
     data object ReleaseTalk : CallAction
     data object RequestMicrophone : CallAction
+    data object MicrophonePermissionRevoked : CallAction
     data class SelectBroker(val broker: BrokerProfile) : CallAction
     data class UpdateChannel(val channel: String) : CallAction
     data class UpdateKey(val key: String) : CallAction
@@ -114,6 +115,10 @@ class CallViewModel(
             CallAction.RequestMicrophone -> {
                 update { copy(microphoneGranted = true) }
                 update { copy(canTalk = isConnectedAndFree()) }
+            }
+            CallAction.MicrophonePermissionRevoked -> {
+                update { copy(microphoneGranted = false, canTalk = false) }
+                if (_uiState.value.talkState == TalkState.LOCAL_TALKING) releaseTalk()
             }
             is CallAction.SelectBroker -> update { copy(broker = action.broker) }
             is CallAction.UpdateChannel -> updateChannel(action.channel)

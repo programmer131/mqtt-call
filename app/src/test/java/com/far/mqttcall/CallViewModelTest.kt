@@ -62,6 +62,18 @@ class CallViewModelTest {
     }
 
     @Test
+    fun `revoked permission disables PTT state after a previous grant`() = runTest {
+        val fixture = Fixture()
+        fixture.connectWithMicrophone()
+        assertTrue(fixture.viewModel.uiState.value.canTalk)
+
+        fixture.viewModel.dispatch(CallAction.MicrophonePermissionRevoked)
+
+        assertFalse(fixture.viewModel.uiState.value.microphoneGranted)
+        assertFalse(fixture.viewModel.uiState.value.canTalk)
+    }
+
+    @Test
     fun `press publishes claim before audio and release stops capture`() = runTest {
         val fixture = Fixture()
         fixture.viewModel.dispatch(CallAction.Connect)

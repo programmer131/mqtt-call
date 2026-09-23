@@ -405,16 +405,6 @@ private class ForegroundCallAudioEngine(
 internal class CallViewModelFactory(
     private val createViewModel: () -> CallViewModel,
 ) : ViewModelProvider.Factory {
-    // Temporary Activity bridge until Task 4 switches the UI to LocalBinder.
-    constructor(context: Context) : this({
-        CallViewModel(
-            transport = PahoMqttTransport(),
-            cryptoEngine = AndroidCryptoEngine(context),
-            audioEngine = AndroidAudioEngine(context),
-            settingsStore = AndroidCallSettingsStore(context),
-        )
-    })
-
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         require(modelClass == CallViewModel::class.java)
         @Suppress("UNCHECKED_CAST")

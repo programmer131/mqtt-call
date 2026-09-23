@@ -4,6 +4,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertHeightIsEqualTo
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.dp
 import org.junit.Rule
@@ -36,7 +38,10 @@ class CallScreenTest {
                 CallScreen(
                     state = CallUiState(),
                     onAction = {},
-                    requestMicrophone = {},
+                    onPttPress = { false },
+                    onExit = {},
+                    showMicrophoneSettings = false,
+                    openAppSettings = {},
                 )
             }
         }
@@ -45,5 +50,45 @@ class CallScreenTest {
             .onNodeWithContentDescription("Push to talk")
             .assertIsDisplayed()
             .assertHeightIsEqualTo(190.dp)
+    }
+
+    @Test
+    fun exit_action_is_in_top_bar_and_invokes_callback() {
+        var exits = 0
+        composeTestRule.setContent {
+            MqttCallTheme {
+                CallScreen(
+                    state = CallUiState(),
+                    onAction = {},
+                    onPttPress = { false },
+                    onExit = { exits++ },
+                    showMicrophoneSettings = false,
+                    openAppSettings = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Exit").assertIsDisplayed().performClick()
+        composeTestRule.runOnIdle { assertEquals(1, exits) }
+    }
+
+    @Test
+    fun denied_microphone_shows_action_to_open_app_settings() {
+        var opens = 0
+        composeTestRule.setContent {
+            MqttCallTheme {
+                CallScreen(
+                    state = CallUiState(),
+                    onAction = {},
+                    onPttPress = { false },
+                    onExit = {},
+                    showMicrophoneSettings = true,
+                    openAppSettings = { opens++ },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("App Settings").assertIsDisplayed().performClick()
+        composeTestRule.runOnIdle { assertEquals(1, opens) }
     }
 }

@@ -64,7 +64,10 @@ import com.far.mqttcall.floor.TalkState
 fun CallScreen(
     state: CallUiState,
     onAction: (CallAction) -> Unit,
-    requestMicrophone: () -> Unit,
+    onPttPress: () -> Boolean,
+    onExit: () -> Unit,
+    showMicrophoneSettings: Boolean,
+    openAppSettings: () -> Unit,
 ) {
     var brokerMenuOpen by remember { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
@@ -76,6 +79,7 @@ fun CallScreen(
             topBar = {
                 TopAppBar(
                     title = { Text("MQTT Call") },
+                    actions = { TextButton(onClick = onExit) { Text("Exit") } },
                 )
             },
         ) { innerPadding ->
@@ -90,11 +94,20 @@ fun CallScreen(
                 PttButton(
                     state = state,
                     onAction = onAction,
-                    requestMicrophone = requestMicrophone,
+                    onPttPress = onPttPress,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(190.dp),
                 )
+
+                if (showMicrophoneSettings) {
+                    Text(
+                        "Microphone permission is required to talk. Enable it in App Settings.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    TextButton(onClick = openAppSettings) { Text("App Settings") }
+                }
 
                 Text(
                     "Private push-to-talk over any MQTT broker",
@@ -196,7 +209,7 @@ fun CallScreen(
 private fun PttButton(
     state: CallUiState,
     onAction: (CallAction) -> Unit,
-    requestMicrophone: () -> Unit,
+    onPttPress: () -> Boolean,
     modifier: Modifier = Modifier,
 ) {
     val pttEnabled = state.canTalk || state.talkState == TalkState.LOCAL_TALKING
@@ -208,12 +221,7 @@ private fun PttButton(
             .pointerInput(pttEnabled, state.microphoneGranted) {
                 detectTapGestures(
                     onPress = {
-                        if (!state.microphoneGranted) {
-                            requestMicrophone()
-                            return@detectTapGestures
-                        }
-                        if (!state.canTalk && state.talkState != TalkState.LOCAL_TALKING) return@detectTapGestures
-                        onAction(CallAction.PressTalk)
+                        if (!onPttPress()) return@detectTapGestures
                         try {
                             tryAwaitRelease()
                         } finally {
