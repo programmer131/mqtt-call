@@ -1,0 +1,9 @@
+# Copy this to linux/listener.conf and keep it private (it contains the key).
+broker=broker.emqx.io
+port=1883
+tls=false
+username=
+password=
+channel=3344
+key=PTT-DEMO-3344
+audio_device=default
