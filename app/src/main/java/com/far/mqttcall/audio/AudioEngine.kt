@@ -22,6 +22,14 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+internal const val MICROPHONE_GAIN = 8
+
+internal fun boostPcm(samples: ShortArray): ShortArray = ShortArray(samples.size) { index ->
+    (samples[index].toInt() * MICROPHONE_GAIN)
+        .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+        .toShort()
+}
+
 class AudioBatcher(private val codec: OpusCodec) {
     private val frames = ArrayList<ByteArray>(FRAMES_PER_BATCH)
 
@@ -99,7 +107,7 @@ class AndroidAudioEngine(
                 while (currentCoroutineContext().isActive) {
                     val read = audioRecord.read(pcm, 0, pcm.size, AudioRecord.READ_BLOCKING)
                     if (read == FRAME_SAMPLES) {
-                        val batch = batcher.addFrame(pcm.copyOf())
+                        val batch = batcher.addFrame(boostPcm(pcm))
                         if (batch != null) onBatch(batch)
                     }
                 }

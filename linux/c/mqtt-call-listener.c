@@ -40,9 +40,10 @@ typedef struct {
     pthread_cond_t changed;
     batch_t *head, *tail;
     size_t count;
-    int playing, released, have_session, have_sequence, stopping;
+    int playing, released, have_session, have_sequence, have_claim_sequence, stopping;
     uint8_t session[SESSION_SIZE];
     uint32_t last_sequence;
+    uint32_t last_claim_sequence;
     char audio_device[128];
 } queue_t;
 
@@ -180,7 +181,7 @@ static void clear_queue_locked(queue_t *queue) {
 
 static void reset_session_locked(queue_t *queue) {
     clear_queue_locked(queue);
-    queue->playing = queue->released = queue->have_session = queue->have_sequence = 0;
+    queue->playing = queue->released = queue->have_session = queue->have_sequence = queue->have_claim_sequence = 0;
 }
 
 static batch_t *decode_audio(const uint8_t session[SESSION_SIZE], uint32_t sequence,
@@ -215,11 +216,6 @@ bad:
 static void enqueue(queue_t *queue, batch_t *batch) {
     pthread_mutex_lock(&queue->mutex);
     if (queue->have_session && memcmp(queue->session, batch->session, SESSION_SIZE)) {
-        if (queue->count) {
-            pthread_mutex_unlock(&queue->mutex);
-            free_batch(batch);
-            return;
-        }
         reset_session_locked(queue);
     }
     if (!queue->have_session) {
@@ -245,6 +241,31 @@ static void enqueue(queue_t *queue, batch_t *batch) {
     queue->tail = batch;
     queue->count++;
     if (queue->count >= STARTUP_BATCHES) queue->playing = 1;
+    pthread_cond_signal(&queue->changed);
+    pthread_mutex_unlock(&queue->mutex);
+}
+
+static void mark_claim(queue_t *queue, const uint8_t session[SESSION_SIZE], uint32_t sequence) {
+    pthread_mutex_lock(&queue->mutex);
+    if (queue->have_session && memcmp(queue->session, session, SESSION_SIZE)) reset_session_locked(queue);
+    if (!queue->have_session) {
+        memcpy(queue->session, session, SESSION_SIZE);
+        queue->have_session = 1;
+    }
+    if (queue->have_claim_sequence && sequence <= queue->last_claim_sequence) {
+        pthread_mutex_unlock(&queue->mutex);
+        return;
+    }
+    if (queue->have_claim_sequence) {
+        /* A new claim starts a new talk turn. Drop stale audio from the prior turn. */
+        clear_queue_locked(queue);
+        queue->playing = 0;
+        queue->released = 0;
+        queue->have_sequence = 0;
+    }
+    queue->last_claim_sequence = sequence;
+    queue->have_claim_sequence = 1;
+    queue->released = 0;
     pthread_cond_signal(&queue->changed);
     pthread_mutex_unlock(&queue->mutex);
 }
@@ -377,7 +398,8 @@ static void on_message(struct mosquitto *client, void *userdata, const struct mo
     if (!message || !message->payload || message->payloadlen < HEADER_SIZE + TAG_SIZE) return;
     if (!decrypt_packet(message->payload, (size_t)message->payloadlen, context->key, &kind,
                         session, &sequence, &plain, &plain_size)) return;
-    if (kind == 2) mark_release(context->queue, session);
+    if (kind == 1) mark_claim(context->queue, session, sequence);
+    else if (kind == 2) mark_release(context->queue, session);
     else if (kind == 3) {
         batch_t *batch = decode_audio(session, sequence, plain, (size_t)plain_size);
         if (batch) enqueue(context->queue, batch);
