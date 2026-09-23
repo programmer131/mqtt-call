@@ -1,5 +1,8 @@
 package com.far.mqttcall.ui
 
+import android.content.ComponentName
+import android.content.pm.ActivityInfo
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertHeightIsEqualTo
@@ -10,6 +13,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.dp
 import org.junit.Rule
 import com.far.mqttcall.CallUiState
+import com.far.mqttcall.MainActivity
 import com.far.mqttcall.domain.AppDefaults
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -90,5 +94,16 @@ class CallScreenTest {
 
         composeTestRule.onNodeWithText("App Settings").assertIsDisplayed().performClick()
         composeTestRule.runOnIdle { assertEquals(1, opens) }
+    }
+
+    @Test
+    fun activity_is_locked_to_portrait_while_ptt_is_active() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val activityInfo = context.packageManager.getActivityInfo(
+            ComponentName(context, MainActivity::class.java),
+            0,
+        )
+
+        assertEquals(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT, activityInfo.screenOrientation)
     }
 }
