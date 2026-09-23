@@ -185,6 +185,65 @@ class CallServiceTest {
     }
 
     @Test
+    fun `connect refreshes service start policy after persisting restart intent`() = runTest {
+        val fixture = Fixture(this)
+        assertFalse(fixture.owner.shouldRestart)
+
+        fixture.owner.dispatch(CallAction.Connect)
+        advanceUntilIdle()
+
+        assertTrue(fixture.settings.load().keepConnected)
+        assertTrue(fixture.owner.shouldRestart)
+        assertEquals(1, fixture.calls.count { it == "service-start" })
+        fixture.owner.destroy()
+        advanceUntilIdle()
+    }
+
+    @Test
+    fun `new owner reconnects from persisted restart intent without opening microphone`() = runTest {
+        val settings = InMemoryCallSettingsStore()
+        val original = Fixture(this, settings)
+        original.connect()
+        original.owner.destroy()
+        advanceUntilIdle()
+
+        val restarted = Fixture(this, settings)
+        assertTrue(restarted.owner.shouldRestart)
+        assertTrue(restarted.calls.isEmpty())
+        restarted.owner.resumePersistedCall()
+        advanceUntilIdle()
+
+        assertEquals(1, restarted.calls.count { it == "connect" })
+        assertFalse("service-start" in restarted.calls)
+        assertFalse("capture-start" in restarted.calls)
+        restarted.transport.events.emit(MqttEvent.Connected)
+        advanceUntilIdle()
+        assertEquals(ConnectionState.CONNECTED, restarted.owner.uiState.value.connection)
+        restarted.owner.destroy()
+        advanceUntilIdle()
+    }
+
+    @Test
+    fun `later start command does not duplicate a restarted call after transport loss`() = runTest {
+        val settings = InMemoryCallSettingsStore()
+        settings.setKeepConnected(true)
+        val fixture = Fixture(this, settings)
+
+        fixture.owner.resumePersistedCall()
+        advanceUntilIdle()
+        fixture.transport.events.emit(MqttEvent.Disconnected)
+        advanceUntilIdle()
+        assertEquals(ConnectionState.DISCONNECTED, fixture.owner.uiState.value.connection)
+
+        fixture.owner.resumePersistedCall()
+        advanceUntilIdle()
+
+        assertEquals(1, fixture.calls.count { it == "connect" })
+        fixture.owner.destroy()
+        advanceUntilIdle()
+    }
+
+    @Test
     fun `cleanup still disconnects when audio cleanup fails`() = runTest {
         val fixture = Fixture(this)
         fixture.audio.failStop = true
@@ -266,9 +325,11 @@ class CallServiceTest {
         assertTrue("disconnect" in fixture.calls)
     }
 
-    private class Fixture(private val testScope: TestScope) {
+    private class Fixture(
+        private val testScope: TestScope,
+        val settings: InMemoryCallSettingsStore = InMemoryCallSettingsStore(),
+    ) {
         val calls = mutableListOf<String>()
-        val settings = InMemoryCallSettingsStore()
         lateinit var transport: FakeTransport
         lateinit var audio: FakeAudio
         var permissionGranted = true

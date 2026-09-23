@@ -62,6 +62,18 @@ class CallViewModelTest {
     }
 
     @Test
+    fun `connect persists restart intent for an active call`() = runTest {
+        val fixture = Fixture()
+        assertFalse(fixture.settings.load().keepConnected)
+
+        fixture.viewModel.dispatch(CallAction.Connect)
+        assertTrue(fixture.settings.load().keepConnected)
+        advanceUntilIdle()
+
+        assertEquals(ConnectionState.CONNECTING, fixture.viewModel.uiState.value.connection)
+    }
+
+    @Test
     fun `revoked permission disables PTT state after a previous grant`() = runTest {
         val fixture = Fixture()
         fixture.connectWithMicrophone()
@@ -190,11 +202,12 @@ class CallViewModelTest {
         var nowMs = 0L
         val transport = FakeTransport()
         val audio = FakeAudioEngine()
+        val settings = InMemoryCallSettingsStore()
         val viewModel = CallViewModel(
             transport = transport,
             cryptoEngine = JvmCryptoEngine(),
             audioEngine = audio,
-            settingsStore = InMemoryCallSettingsStore(),
+            settingsStore = settings,
             sessionId = ByteArray(16) { 1 },
             clockMs = { nowMs },
             scope = CoroutineScope(Dispatchers.Unconfined + SupervisorJob()),

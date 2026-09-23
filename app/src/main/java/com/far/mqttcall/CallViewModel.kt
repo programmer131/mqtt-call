@@ -144,6 +144,7 @@ class CallViewModel(
             return
         }
 
+        settingsStore.setKeepConnected(true)
         update { copy(connection = ConnectionState.CONNECTING, error = null) }
         scope.launch {
             runCatching {

@@ -128,6 +128,7 @@ class CallService : Service() {
             owner.stop()
             return START_NOT_STICKY
         }
+        owner.resumePersistedCall()
         return if (owner.shouldRestart) START_STICKY else START_NOT_STICKY
     }
 
@@ -210,6 +211,7 @@ internal class CallServiceLifecycle(
     private enum class Phase { RUNNING, STOPPING, STOPPED, DESTROYED }
     @Volatile private var phase = Phase.RUNNING
     private var reconnectPending = false
+    private var restartChecked = false
     @Volatile private var generation = 0
     private val stateLock = Any()
     private val state = MutableStateFlow(CallUiState())
@@ -218,6 +220,15 @@ internal class CallServiceLifecycle(
     private var session: Session? = newSession()
     val viewModel: CallViewModel get() = currentSession().viewModel
     val shouldRestart: Boolean get() = phase == Phase.RUNNING && settingsStore.load().keepConnected
+
+    fun resumePersistedCall() {
+        if (restartChecked) return
+        restartChecked = true
+        if (shouldRestart && state.value.connection == ConnectionState.DISCONNECTED) {
+            // onStartCommand itself supplies the start command and sticky result.
+            dispatch(CallAction.Connect, refreshStart = false)
+        }
+    }
 
     private class Session(
         val dependencies: CallServiceDependencies,
@@ -264,7 +275,9 @@ internal class CallServiceLifecycle(
         return session ?: newSession().also { session = it }
     }
 
-    fun dispatch(action: CallAction) {
+    fun dispatch(action: CallAction) = dispatch(action, refreshStart = true)
+
+    private fun dispatch(action: CallAction, refreshStart: Boolean) {
         if (phase == Phase.DESTROYED) return
         if (action == CallAction.Disconnect) {
             reconnectPending = false
@@ -276,12 +289,21 @@ internal class CallServiceLifecycle(
             return
         }
         val vm = currentSession().viewModel
+        val previousConnection = vm.uiState.value.connection
         if (action == CallAction.Connect && phase == Phase.STOPPED) {
             phase = Phase.RUNNING
-            onStarted()
         }
         vm.dispatch(action)
         state.value = vm.uiState.value
+        if (refreshStart && action == CallAction.Connect &&
+            previousConnection != ConnectionState.CONNECTING &&
+            previousConnection != ConnectionState.CONNECTED &&
+            vm.uiState.value.connection == ConnectionState.CONNECTING &&
+            shouldRestart
+        ) {
+            // Issue a new start command so Android records START_STICKY for this call.
+            onStarted()
+        }
     }
 
     fun stop() {
