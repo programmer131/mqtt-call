@@ -74,7 +74,9 @@ class AndroidAudioEngine(
                 FRAME_SAMPLES * BYTES_PER_SAMPLE * 4,
             )
             val audioRecord = AudioRecord(
-                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                // Xiaomi devices can return near-silent PCM from VOICE_COMMUNICATION.
+                // Voice recognition keeps the microphone path open without that suppression.
+                MediaRecorder.AudioSource.VOICE_RECOGNITION,
                 SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,

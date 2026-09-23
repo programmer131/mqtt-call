@@ -7,8 +7,8 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/opt/mqtt-call/linux
 ExecStart=/opt/mqtt-call/linux/c/mqtt-call-listener /etc/mqtt-call/listener.conf
-Restart=on-failure
+Restart=always
 RestartSec=3
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target
