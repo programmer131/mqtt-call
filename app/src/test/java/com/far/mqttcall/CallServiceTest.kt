@@ -16,25 +16,105 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class CallServiceTest {
     @Test
+    fun `stop then connect while bound recreates owner resources and preserves state flow`() = runTest {
+        val fixture = Fixture(this)
+        fixture.connect()
+        val oldViewModel = fixture.owner.viewModel
+        val oldTransport = fixture.transport
+        val oldAudio = fixture.audio
+        val boundState = fixture.owner.uiState
+
+        fixture.owner.stop()
+        advanceUntilIdle()
+        assertEquals(ConnectionState.DISCONNECTED, boundState.value.connection)
+        fixture.owner.dispatch(CallAction.Connect)
+        advanceUntilIdle()
+        fixture.transport.events.emit(MqttEvent.Connected)
+        advanceUntilIdle()
+
+        assertSame(boundState, fixture.owner.uiState)
+        assertNotSame(oldViewModel, fixture.owner.viewModel)
+        assertNotSame(oldTransport, fixture.transport)
+        assertNotSame(oldAudio, fixture.audio)
+        assertTrue(fixture.calls.indexOf("service-start") < fixture.calls.indexOf("connect"))
+        assertEquals(ConnectionState.CONNECTED, boundState.value.connection)
+        assertEquals(1, fixture.calls.count { it == "connect" })
+        fixture.owner.destroy()
+        advanceUntilIdle()
+    }
+
+    @Test
+    fun `stalled capture startup cannot delay playback cleanup disconnect or service stop`() = runTest {
+        val fixture = Fixture(this)
+        fixture.connect()
+        val gate = CompletableDeferred<Unit>()
+        fixture.audio.startGate = gate
+        fixture.owner.dispatch(CallAction.PressTalk)
+        runCurrent()
+
+        fixture.owner.stop()
+        advanceTimeBy(2_500)
+        runCurrent()
+        try {
+            assertTrue("capture-immediate" in fixture.calls)
+            assertTrue("playback-stop" in fixture.calls)
+            assertTrue("disconnect" in fixture.calls)
+            assertTrue("transport-abort" in fixture.calls)
+            assertTrue("service-stop" in fixture.calls)
+            assertEquals(ConnectionState.DISCONNECTED, fixture.owner.uiState.value.connection)
+        } finally {
+            gate.complete(Unit)
+            advanceUntilIdle()
+        }
+    }
+
+    @Test
+    fun `stalled cleanup operations cannot prevent terminal service stop`() = runTest {
+        val fixture = Fixture(this)
+        val gate = CompletableDeferred<Unit>()
+        fixture.transport.disconnectGate = gate
+        fixture.audio.stopGate = gate
+
+        fixture.owner.stop()
+        advanceTimeBy(2_500)
+        runCurrent()
+        try {
+            assertTrue("capture-stop" in fixture.calls)
+            assertTrue("playback-stop" in fixture.calls)
+            assertTrue("disconnect" in fixture.calls)
+            assertTrue("transport-abort" in fixture.calls)
+            assertEquals(1, fixture.calls.count { it == "service-stop" })
+            fixture.owner.destroy()
+            fixture.owner.dispatch(CallAction.Connect)
+            assertFalse("connect" in fixture.calls)
+        } finally {
+            gate.complete(Unit)
+            advanceUntilIdle()
+        }
+    }
+
+    @Test
     fun `owner retains one view model and does not connect or capture at startup`() = runTest {
         val fixture = Fixture(this)
         val first = fixture.owner.viewModel
         first.dispatch(CallAction.UpdateChannel("7788"))
+        runCurrent()
 
         assertSame(first, fixture.owner.viewModel)
-        assertSame(first.uiState, fixture.owner.uiState)
         assertEquals("7788", fixture.owner.uiState.value.channel)
         assertEquals(1, fixture.transport.events.subscriptionCount.value)
         advanceUntilIdle()
@@ -166,7 +246,7 @@ class CallServiceTest {
     }
 
     @Test
-    fun `destroy waits for in flight capture startup before final cleanup`() = runTest {
+    fun `destroy stops a late capture startup after cleanup has begun`() = runTest {
         val fixture = Fixture(this)
         fixture.connect()
         val gate = CompletableDeferred<Unit>()
@@ -177,11 +257,11 @@ class CallServiceTest {
         fixture.owner.destroy()
         runCurrent()
         assertTrue("capture-immediate" in fixture.calls)
-        assertFalse("disconnect" in fixture.calls)
+        assertTrue("disconnect" in fixture.calls)
         gate.complete(Unit)
         advanceUntilIdle()
 
-        assertTrue(fixture.calls.indexOf("capture-start") < fixture.calls.lastIndexOf("capture-stop"))
+        assertTrue(fixture.calls.indexOf("capture-start") < fixture.calls.lastIndexOf("capture-immediate"))
         assertTrue("capture-start" in fixture.calls)
         assertTrue("disconnect" in fixture.calls)
     }
@@ -189,19 +269,25 @@ class CallServiceTest {
     private class Fixture(private val testScope: TestScope) {
         val calls = mutableListOf<String>()
         val settings = InMemoryCallSettingsStore()
-        val transport = FakeTransport(calls)
-        val audio = FakeAudio(calls)
+        lateinit var transport: FakeTransport
+        lateinit var audio: FakeAudio
         var permissionGranted = true
         private val dispatcher = StandardTestDispatcher(testScope.testScheduler)
         val owner = CallServiceLifecycle(
-            transport = transport,
-            cryptoEngine = JvmCryptoEngine(),
-            audioEngine = audio,
+            createDependencies = {
+                transport = FakeTransport(calls)
+                audio = FakeAudio(calls)
+                CallServiceDependencies(transport, JvmCryptoEngine(), audio) {
+                    calls += "transport-abort"
+                }
+            },
             settingsStore = settings,
             canRecord = { permissionGranted },
             onCaptureChanged = { calls += if (it) "microphone-on" else "microphone-off" },
             onStopped = { calls += "service-stop" },
-            viewModelScope = CoroutineScope(SupervisorJob() + dispatcher),
+            onStarted = { calls += "service-start" },
+            viewModelDispatcher = dispatcher,
+            cleanupDispatcher = dispatcher,
             cleanupScope = CoroutineScope(SupervisorJob() + dispatcher),
         )
 
@@ -216,16 +302,21 @@ class CallServiceTest {
     }
 
     private class FakeTransport(private val calls: MutableList<String>) : MqttTransport {
+        var disconnectGate: CompletableDeferred<Unit>? = null
         override val events = MutableSharedFlow<MqttEvent>(extraBufferCapacity = 8)
         override suspend fun connect(profile: BrokerProfile, topic: String) { calls += "connect" }
         override suspend fun publish(payload: ByteArray, qos: Int) { calls += "publish" }
-        override suspend fun disconnect() { calls += "disconnect" }
+        override suspend fun disconnect() {
+            calls += "disconnect"
+            withContext(NonCancellable) { disconnectGate?.await() }
+        }
     }
 
     private class FakeAudio(private val calls: MutableList<String>) : AudioEngine {
         var failStart = false
         var failStop = false
         var startGate: CompletableDeferred<Unit>? = null
+        var stopGate: CompletableDeferred<Unit>? = null
         override suspend fun startCapture(
             audioPacketIntervalUnits: Int,
             onBatch: suspend (List<ByteArray>) -> Unit,
@@ -238,6 +329,7 @@ class CallServiceTest {
         }
         override suspend fun stopCapture() {
             calls += "capture-stop"
+            withContext(NonCancellable) { stopGate?.await() }
             check(!failStop) { "Capture cleanup failed" }
         }
         override fun stopCaptureImmediately() { calls += "capture-immediate" }

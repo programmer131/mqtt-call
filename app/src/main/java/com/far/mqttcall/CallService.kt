@@ -20,24 +20,33 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import com.far.mqttcall.audio.AndroidAudioEngine
+import com.far.mqttcall.audio.AudioBatch
 import com.far.mqttcall.audio.AudioEngine
+import com.far.mqttcall.audio.BufferState
 import com.far.mqttcall.crypto.AndroidCryptoEngine
 import com.far.mqttcall.crypto.CryptoEngine
+import com.far.mqttcall.floor.TalkState
 import com.far.mqttcall.settings.AndroidCallSettingsStore
 import com.far.mqttcall.settings.CallSettingsStore
 import com.far.mqttcall.transport.MqttTransport
 import com.far.mqttcall.transport.PahoMqttTransport
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 class CallService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -45,6 +54,7 @@ class CallService : Service() {
     private val binder = LocalBinder()
     private var microphoneActive = false
     private var destroyed = false
+    private var foregroundEnabled = true
 
     inner class LocalBinder : Binder() {
         val viewModel: CallViewModel get() = owner.viewModel
@@ -68,9 +78,15 @@ class CallService : Service() {
         // Meet the foreground deadline before settings, crypto, or MQTT initialization.
         updateForeground(CallUiState())
         owner = CallServiceLifecycle(
-            transport = PahoMqttTransport(),
-            cryptoEngine = AndroidCryptoEngine(applicationContext),
-            audioEngine = AndroidAudioEngine(applicationContext),
+            createDependencies = {
+                val transport = PahoMqttTransport()
+                CallServiceDependencies(
+                    transport,
+                    AndroidCryptoEngine(applicationContext),
+                    AndroidAudioEngine(applicationContext),
+                    transport::abort,
+                )
+            },
             settingsStore = AndroidCallSettingsStore(applicationContext),
             canRecord = {
                 ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
@@ -85,9 +101,16 @@ class CallService : Service() {
                 }
             },
             onStopped = {
-                serviceScope.cancel()
+                foregroundEnabled = false
+                microphoneActive = false
                 ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
                 stopSelf()
+            },
+            onStarted = {
+                // stopSelf does not destroy a service that still has an Activity bound to it.
+                foregroundEnabled = true
+                ContextCompat.startForegroundService(this, Intent(this, CallService::class.java))
+                updateForeground(owner.uiState.value)
             },
         )
         serviceScope.launch {
@@ -117,6 +140,7 @@ class CallService : Service() {
     }
 
     private fun updateForeground(state: CallUiState) {
+        if (destroyed || !foregroundEnabled) return
         val types = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK or
             if (microphoneActive) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0
         ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(state), types)
@@ -163,62 +187,168 @@ class CallService : Service() {
     }
 }
 
+internal data class CallServiceDependencies(
+    val transport: MqttTransport,
+    val cryptoEngine: CryptoEngine,
+    val audioEngine: AudioEngine,
+    /** Must return immediately; fence new work and schedule any blocking force-close off-thread. */
+    val abortTransport: () -> Unit,
+)
+
 /** Service-owned resources, separated from Android callbacks for JVM lifecycle tests. */
 internal class CallServiceLifecycle(
-    private val transport: MqttTransport,
-    cryptoEngine: CryptoEngine,
-    audioEngine: AudioEngine,
+    private val createDependencies: () -> CallServiceDependencies,
     private val settingsStore: CallSettingsStore,
-    canRecord: () -> Boolean,
-    onCaptureChanged: suspend (Boolean) -> Unit,
+    private val canRecord: () -> Boolean,
+    private val onCaptureChanged: suspend (Boolean) -> Unit,
     private val onStopped: () -> Unit,
-    private val viewModelScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+    private val onStarted: () -> Unit,
+    private val viewModelDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val cleanupDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val cleanupScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
 ) {
-    private val audio = ForegroundCallAudioEngine(audioEngine, canRecord, onCaptureChanged)
-    private val store = ViewModelStore()
-    private var closed = false
-    val viewModel: CallViewModel = ViewModelProvider.create(
-        store,
-        CallViewModelFactory {
-            CallViewModel(transport, cryptoEngine, audio, settingsStore, scope = viewModelScope)
-        },
-    )[CallViewModel::class.java]
-    val uiState: StateFlow<CallUiState> get() = viewModel.uiState
-    val shouldRestart: Boolean get() = !closed && settingsStore.load().keepConnected
+    private enum class Phase { RUNNING, STOPPING, STOPPED, DESTROYED }
+    @Volatile private var phase = Phase.RUNNING
+    private var reconnectPending = false
+    @Volatile private var generation = 0
+    private val stateLock = Any()
+    private val state = MutableStateFlow(CallUiState())
+    // Remains stable for collectors held by an Activity across Stop -> Connect.
+    val uiState: StateFlow<CallUiState> = state.asStateFlow()
+    private var session: Session? = newSession()
+    val viewModel: CallViewModel get() = currentSession().viewModel
+    val shouldRestart: Boolean get() = phase == Phase.RUNNING && settingsStore.load().keepConnected
+
+    private class Session(
+        val dependencies: CallServiceDependencies,
+        val scope: CoroutineScope,
+        val audio: ForegroundCallAudioEngine,
+        val store: ViewModelStore,
+        val viewModel: CallViewModel,
+        val collector: Job,
+    )
+
+    private fun newSession(): Session {
+        val id = ++generation
+        val dependencies = createDependencies()
+        val scope = CoroutineScope(SupervisorJob() + viewModelDispatcher)
+        val audio = ForegroundCallAudioEngine(dependencies.audioEngine, canRecord) { active ->
+            if (id == generation && (phase == Phase.RUNNING || !active)) onCaptureChanged(active)
+        }
+        val store = ViewModelStore()
+        val vm = ViewModelProvider.create(store, CallViewModelFactory {
+            CallViewModel(dependencies.transport, dependencies.cryptoEngine, audio, settingsStore, scope = scope)
+        })[CallViewModel::class.java]
+        if (id > 1) {
+            // Preserve unsaved UI choices across a stopped-but-bound session.
+            vm.dispatch(CallAction.SelectBroker(state.value.broker))
+            vm.dispatch(CallAction.UpdateChannel(state.value.channel))
+            vm.dispatch(CallAction.UpdateKey(state.value.key))
+            if (state.value.microphoneGranted) vm.dispatch(CallAction.RequestMicrophone)
+        }
+        state.value = vm.uiState.value
+        val collector = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            vm.uiState.collect { value ->
+                synchronized(stateLock) {
+                    if (id == generation && phase != Phase.STOPPING && phase != Phase.DESTROYED) {
+                        state.value = value
+                    }
+                }
+            }
+        }
+        return Session(dependencies, scope, audio, store, vm, collector)
+    }
+
+    private fun currentSession(): Session {
+        check(phase != Phase.DESTROYED) { "Call service was destroyed" }
+        return session ?: newSession().also { session = it }
+    }
 
     fun dispatch(action: CallAction) {
-        if (closed) return
-        if (action == CallAction.Disconnect) stop() else viewModel.dispatch(action)
+        if (phase == Phase.DESTROYED) return
+        if (action == CallAction.Disconnect) {
+            reconnectPending = false
+            stop()
+            return
+        }
+        if (phase == Phase.STOPPING) {
+            if (action == CallAction.Connect) reconnectPending = true
+            return
+        }
+        val vm = currentSession().viewModel
+        if (action == CallAction.Connect && phase == Phase.STOPPED) {
+            phase = Phase.RUNNING
+            onStarted()
+        }
+        vm.dispatch(action)
+        state.value = vm.uiState.value
     }
 
     fun stop() {
-        if (closed) return
+        reconnectPending = false
+        if (phase == Phase.DESTROYED || phase == Phase.STOPPING || phase == Phase.STOPPED) return
         settingsStore.setKeepConnected(false)
-        viewModel.dispatch(CallAction.Disconnect)
-        close(stopService = true)
+        session?.viewModel?.dispatch(CallAction.Disconnect)
+        phase = Phase.STOPPING
+        closeSession(stopService = true)
     }
 
-    fun destroy() = close(stopService = false)
+    fun destroy() {
+        if (phase == Phase.DESTROYED) return
+        val alreadyStopping = phase == Phase.STOPPING
+        phase = Phase.DESTROYED
+        reconnectPending = false
+        if (!alreadyStopping) closeSession(stopService = false)
+    }
 
-    private fun close(stopService: Boolean) {
-        if (closed) return
-        closed = true
-        // Clearing cancels the ViewModel's work and invokes immediate capture stop synchronously.
-        store.clear()
-        // This scope outlives the ViewModel and the notification collector during onDestroy.
+    private fun closeSession(stopService: Boolean) {
+        val old = session
+        old?.collector?.cancel()
+        old?.store?.clear() // Immediate capture stop and ViewModel cancellation, without joining.
+        synchronized(stateLock) {
+            state.value = state.value.copy(
+                connection = ConnectionState.DISCONNECTED,
+                talkState = TalkState.IDLE,
+                bufferState = BufferState.BUFFERING,
+                canTalk = false,
+                securityLevel = null,
+                error = null,
+            )
+        }
         cleanupScope.launch {
+            // Detached workers are deliberate: a blocking driver or NonCancellable operation must
+            // not make the timeout itself wait for a child coroutine to finish.
+            val workers = CoroutineScope(SupervisorJob() + cleanupDispatcher)
             try {
-                // Cancellation alone does not wait for an in-flight recorder/transport startup.
-                viewModelScope.coroutineContext[Job]?.join()
-                runCatching { audio.stopCapture() }
-                runCatching { audio.stopPlayback() }
-                runCatching { transport.disconnect() }
+                if (old != null) {
+                    runCatching { old.dependencies.abortTransport() }
+                    val jobs = listOf(
+                        workers.launch { runCatching { old.audio.stopCapture() } },
+                        workers.launch { runCatching { old.audio.stopPlayback() } },
+                        workers.launch { runCatching { old.dependencies.transport.disconnect() } },
+                        workers.launch { old.scope.coroutineContext[Job]?.join() },
+                    )
+                    withTimeoutOrNull(CLEANUP_TIMEOUT_MS) { jobs.joinAll() }
+                }
             } finally {
-                if (stopService) onStopped()
-                cleanupScope.cancel()
+                workers.cancel()
+                session = null
+                if (phase == Phase.DESTROYED) {
+                    cleanupScope.cancel()
+                } else if (stopService) {
+                    phase = Phase.STOPPED
+                    onStopped()
+                    if (reconnectPending) {
+                        reconnectPending = false
+                        dispatch(CallAction.Connect)
+                    }
+                }
             }
         }
+    }
+
+    private companion object {
+        const val CLEANUP_TIMEOUT_MS = 2_000L
     }
 }
 
@@ -228,17 +358,38 @@ private class ForegroundCallAudioEngine(
     private val canRecord: () -> Boolean,
     private val onCaptureChanged: suspend (Boolean) -> Unit,
 ) : AudioEngine by delegate {
+    @Volatile private var retired = false
+
+    override fun stopCaptureImmediately() {
+        retired = true
+        delegate.stopCaptureImmediately()
+    }
+
     override suspend fun startCapture(
         audioPacketIntervalUnits: Int,
         onBatch: suspend (List<ByteArray>) -> Unit,
     ) {
+        check(!retired) { "Call session was stopped" }
         check(canRecord()) { "Microphone permission is required. Enable it in App Settings." }
         try {
             onCaptureChanged(true)
+            check(!retired) { "Call session was stopped" }
             delegate.startCapture(audioPacketIntervalUnits, onBatch)
         } catch (error: Throwable) {
             withContext(NonCancellable) { onCaptureChanged(false) }
             throw error
+        } finally {
+            // A driver may finish startup after cancellation or after the cleanup deadline.
+            if (retired) delegate.stopCaptureImmediately()
+        }
+    }
+
+    override suspend fun play(batch: AudioBatch) {
+        if (retired) return
+        try {
+            delegate.play(batch)
+        } finally {
+            if (retired) withContext(NonCancellable) { delegate.stopPlayback() }
         }
     }
 
