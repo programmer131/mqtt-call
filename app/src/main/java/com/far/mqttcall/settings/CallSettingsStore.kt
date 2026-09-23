@@ -19,12 +19,18 @@ data class SavedCallSettings(
     val broker: BrokerProfile,
     val channel: String,
     val key: String,
+    val keepConnected: Boolean = false,
+    val microphonePermissionPrompted: Boolean = false,
 )
 
 interface CallSettingsStore {
     fun load(): SavedCallSettings
 
     fun save(settings: SavedCallSettings)
+
+    fun setKeepConnected(keepConnected: Boolean)
+
+    fun markMicrophonePermissionPrompted()
 }
 
 class InMemoryCallSettingsStore(
@@ -37,7 +43,18 @@ class InMemoryCallSettingsStore(
     override fun load(): SavedCallSettings = current
 
     override fun save(settings: SavedCallSettings) {
-        current = settings
+        current = settings.copy(
+            keepConnected = current.keepConnected,
+            microphonePermissionPrompted = current.microphonePermissionPrompted,
+        )
+    }
+
+    override fun setKeepConnected(keepConnected: Boolean) {
+        current = current.copy(keepConnected = keepConnected)
+    }
+
+    override fun markMicrophonePermissionPrompted() {
+        current = current.copy(microphonePermissionPrompted = true)
     }
 }
 
@@ -59,6 +76,8 @@ class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
             broker = broker,
             channel = preferences.getString(KEY_CHANNEL, AppDefaults.defaultChannel)!!,
             key = key,
+            keepConnected = preferences.getBoolean(KEY_KEEP_CONNECTED, false),
+            microphonePermissionPrompted = preferences.getBoolean(KEY_MICROPHONE_PERMISSION_PROMPTED, false),
         )
     }
 
@@ -73,6 +92,14 @@ class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
             .putString(KEY_CHANNEL, settings.channel)
             .putString(KEY_ENCRYPTED_KEY, encryptKey(settings.key))
             .apply()
+    }
+
+    override fun setKeepConnected(keepConnected: Boolean) {
+        preferences.edit().putBoolean(KEY_KEEP_CONNECTED, keepConnected).apply()
+    }
+
+    override fun markMicrophonePermissionPrompted() {
+        preferences.edit().putBoolean(KEY_MICROPHONE_PERMISSION_PROMPTED, true).apply()
     }
 
     private fun encryptKey(value: String): String {
@@ -130,6 +157,8 @@ class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
         const val KEY_BROKER_TLS = "broker_tls"
         const val KEY_BROKER_USERNAME = "broker_username"
         const val KEY_BROKER_PASSWORD = "broker_password"
+        const val KEY_KEEP_CONNECTED = "keep_connected"
+        const val KEY_MICROPHONE_PERMISSION_PROMPTED = "microphone_permission_prompted"
         const val KEY_CHANNEL = "channel"
         const val KEY_ENCRYPTED_KEY = "encrypted_key"
     }
