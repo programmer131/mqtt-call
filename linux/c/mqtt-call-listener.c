@@ -11,7 +11,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
-#include <time.h>
 
 #define HEADER_SIZE 34
 #define TAG_SIZE 16
@@ -52,8 +51,6 @@ typedef struct {
     char topic[96];
     queue_t *queue;
     volatile sig_atomic_t connected;
-    unsigned reconnect_delay;
-    time_t next_reconnect;
 } mqtt_context_t;
 
 static volatile sig_atomic_t stopping;
@@ -358,8 +355,6 @@ static void on_connect(struct mosquitto *client, void *userdata, int result) {
         return;
     }
     context->connected = 1;
-    context->reconnect_delay = 2;
-    context->next_reconnect = 0;
     result = mosquitto_subscribe(client, NULL, context->topic, 0);
     if (result == MOSQ_ERR_SUCCESS) fprintf(stderr, "listening on %s\n", context->topic);
     else fprintf(stderr, "MQTT subscribe failed: %s\n", mosquitto_strerror(result));
@@ -369,9 +364,8 @@ static void on_disconnect(struct mosquitto *client, void *userdata, int result) 
     mqtt_context_t *context = userdata;
     (void)client;
     context->connected = 0;
-    if (!stopping && result != MOSQ_ERR_SUCCESS) {
-        fprintf(stderr, "MQTT disconnected: %s; reconnecting with backoff\n", mosquitto_strerror(result));
-    }
+    if (!stopping && result != MOSQ_ERR_SUCCESS)
+        fprintf(stderr, "MQTT disconnected: %s; Mosquitto will retry with backoff\n", mosquitto_strerror(result));
 }
 
 static void on_message(struct mosquitto *client, void *userdata, const struct mosquitto_message *message) {
@@ -438,6 +432,7 @@ int main(int argc, char **argv) {
     mosquitto_disconnect_callback_set(client, on_disconnect);
     mosquitto_message_callback_set(client, on_message);
     mosquitto_log_callback_set(client, on_log);
+    mosquitto_reconnect_delay_set(client, 2, 30, true);
     if (config.username[0]) mosquitto_username_pw_set(client, config.username, config.password);
     if (config.tls && mosquitto_tls_set(client, NULL, NULL, NULL, NULL, NULL) != MOSQ_ERR_SUCCESS) {
         fprintf(stderr, "cannot configure TLS\n");
@@ -445,9 +440,7 @@ int main(int argc, char **argv) {
     }
     result = mosquitto_connect(client, config.broker, config.port, 30);
     if (result != MOSQ_ERR_SUCCESS) {
-        fprintf(stderr, "MQTT connect failed: %s; retrying with backoff\n", mosquitto_strerror(result));
-        context.next_reconnect = time(NULL) + 1;
-        context.reconnect_delay = 1;
+        fprintf(stderr, "MQTT connect failed: %s; Mosquitto will retry with backoff\n", mosquitto_strerror(result));
     } else {
         fprintf(stderr, "MQTT Call listener started for %s\n", context.topic);
     }
@@ -456,17 +449,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "MQTT loop failed: %s\n", mosquitto_strerror(result));
         exit_code = EXIT_FAILURE;
     } else {
-        while (!stopping) {
-            time_t now = time(NULL);
-            if (!context.connected && now >= context.next_reconnect) {
-                int reconnect_result = mosquitto_reconnect_async(client);
-                if (reconnect_result != MOSQ_ERR_SUCCESS)
-                    fprintf(stderr, "MQTT reconnect attempt: %s\n", mosquitto_strerror(reconnect_result));
-                context.next_reconnect = now + context.reconnect_delay;
-                if (context.reconnect_delay < 30) context.reconnect_delay *= 2;
-            }
-            sleep(1);
-        }
+        while (!stopping) sleep(1);
         mosquitto_loop_stop(client, true);
     }
     if (result != MOSQ_ERR_SUCCESS && !stopping) exit_code = EXIT_FAILURE;

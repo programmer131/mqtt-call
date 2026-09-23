@@ -1,5 +1,5 @@
 # Copy this to linux/listener.conf and keep it private (it contains the key).
-broker=broker.emqx.io
+broker=test.mosquitto.org
 port=1883
 tls=false
 username=
