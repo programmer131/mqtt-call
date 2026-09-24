@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <unistd.h>
 
 #define HEADER_SIZE 34
 #define TAG_SIZE 16
@@ -421,6 +422,7 @@ int main(int argc, char **argv) {
     struct mosquitto *client;
     pthread_t playback;
     uint8_t key[32];
+    char client_id[128];
     int result, exit_code = EXIT_SUCCESS;
     if (argc > 2) {
         fprintf(stderr, "usage: %s [config-file]\n", argv[0]);
@@ -441,7 +443,9 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
     mosquitto_lib_init();
-    client = mosquitto_new("mqtt-call-linux-listener", true, &context);
+    /* Each listener needs its own MQTT identity; a duplicate identity disconnects the other listener. */
+    snprintf(client_id, sizeof(client_id), "mqtt-call-linux-%s-%ld", config.channel, (long)getpid());
+    client = mosquitto_new(client_id, true, &context);
     if (!client) {
         fprintf(stderr, "cannot create MQTT client\n");
         stopping = 1;
