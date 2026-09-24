@@ -23,15 +23,18 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -59,11 +62,15 @@ import com.far.mqttcall.domain.defaultBrokerProfiles
 import com.far.mqttcall.domain.BrokerProfile
 import com.far.mqttcall.floor.TalkState
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CallScreen(
     state: CallUiState,
     onAction: (CallAction) -> Unit,
-    requestMicrophone: () -> Unit,
+    onPttPress: () -> Boolean,
+    onExit: () -> Unit,
+    showMicrophoneSettings: Boolean,
+    openAppSettings: () -> Unit,
 ) {
     var brokerMenuOpen by remember { mutableStateOf(false) }
     var addBrokerOpen by remember { mutableStateOf(false) }
@@ -80,13 +87,40 @@ fun CallScreen(
     val connected = state.connection == ConnectionState.CONNECTED
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("MQTT Call") },
+                    actions = { TextButton(onClick = onExit) { Text("Exit") } },
+                )
+            },
+        ) { innerPadding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(innerPadding)
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                PttButton(
+                    state = state,
+                    onAction = onAction,
+                    onPttPress = onPttPress,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(190.dp),
+                )
+
+                if (showMicrophoneSettings) {
+                    Text(
+                        "Microphone permission is required to talk. Enable it in App Settings.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    TextButton(onClick = openAppSettings) { Text("App Settings") }
+                }
+
             Text("MQTT Call", style = MaterialTheme.typography.headlineMedium)
             Text(
                 "Private push-to-talk over any MQTT broker",
@@ -234,43 +268,8 @@ fun CallScreen(
                 }
             }
 
-            val pttEnabled = state.canTalk || state.talkState == TalkState.LOCAL_TALKING
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(190.dp)
-                    .clip(CircleShape)
-                    .background(if (pttEnabled) MaterialTheme.colorScheme.primary else Color.Gray)
-                    .pointerInput(pttEnabled, state.microphoneGranted) {
-                        detectTapGestures(
-                            onPress = {
-                                if (!state.microphoneGranted) {
-                                    requestMicrophone()
-                                    return@detectTapGestures
-                                }
-                                if (!state.canTalk && state.talkState != TalkState.LOCAL_TALKING) return@detectTapGestures
-                                onAction(CallAction.PressTalk)
-                                try {
-                                    tryAwaitRelease()
-                                } finally {
-                                    onAction(CallAction.ReleaseTalk)
-                                }
-                            },
-                        )
-                    }
-                    .semantics {
-                        role = Role.Button
-                        contentDescription = "Push to talk"
-                    },
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    if (state.talkState == TalkState.LOCAL_TALKING) "RELEASE TO STOP" else "PUSH TO TALK",
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleLarge,
-                )
+                Spacer(Modifier.size(4.dp))
             }
-            Spacer(Modifier.size(4.dp))
         }
     }
 
@@ -349,6 +348,45 @@ fun CallScreen(
             dismissButton = {
                 TextButton(onClick = { addBrokerOpen = false }) { Text("Cancel") }
             },
+        )
+    }
+}
+
+@Composable
+private fun PttButton(
+    state: CallUiState,
+    onAction: (CallAction) -> Unit,
+    onPttPress: () -> Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val pttEnabled = state.canTalk || state.talkState == TalkState.LOCAL_TALKING
+
+    Box(
+        modifier = modifier
+            .clip(CircleShape)
+            .background(if (pttEnabled) MaterialTheme.colorScheme.primary else Color.Gray)
+            .pointerInput(pttEnabled, state.microphoneGranted) {
+                detectTapGestures(
+                    onPress = {
+                        if (!onPttPress()) return@detectTapGestures
+                        try {
+                            tryAwaitRelease()
+                        } finally {
+                            onAction(CallAction.ReleaseTalk)
+                        }
+                    },
+                )
+            }
+            .semantics {
+                role = Role.Button
+                contentDescription = "Push to talk"
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            if (state.talkState == TalkState.LOCAL_TALKING) "RELEASE TO STOP" else "PUSH TO TALK",
+            color = Color.White,
+            style = MaterialTheme.typography.titleLarge,
         )
     }
 }
