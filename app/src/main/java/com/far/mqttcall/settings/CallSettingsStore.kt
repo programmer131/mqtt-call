@@ -22,6 +22,7 @@ data class SavedCallSettings(
     val keySlots: List<String>,
     val activeKeyIndex: Int = 0,
     val savedBrokers: List<BrokerProfile> = emptyList(),
+    val savedChannels: List<String> = listOf(AppDefaults.defaultChannel),
     val keepConnected: Boolean = false,
     val microphonePermissionPrompted: Boolean = false,
 ) {
@@ -96,6 +97,7 @@ class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
             keySlots = keySlots,
             activeKeyIndex = preferences.getInt(KEY_ACTIVE_KEY_INDEX, 0).coerceIn(0, KEY_SLOT_COUNT - 1),
             savedBrokers = loadSavedBrokers(),
+            savedChannels = (loadSavedChannels() + preferences.getString(KEY_CHANNEL, AppDefaults.defaultChannel)!!).distinct(),
             keepConnected = preferences.getBoolean(KEY_KEEP_CONNECTED, false),
             microphonePermissionPrompted = preferences.getBoolean(KEY_MICROPHONE_PERMISSION_PROMPTED, false),
         )
@@ -137,6 +139,14 @@ class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
             editor.putString(brokerField(index, "password"), broker.password)
             editor.putInt(brokerField(index, "audio_packet_interval_units"), broker.audioPacketIntervalUnits)
         }
+        val previousChannelCount = preferences.getInt(KEY_SAVED_CHANNEL_COUNT, 0)
+        repeat(maxOf(previousChannelCount, settings.savedChannels.size)) { index ->
+            editor.remove("$KEY_SAVED_CHANNEL_PREFIX$index")
+        }
+        editor.putInt(KEY_SAVED_CHANNEL_COUNT, settings.savedChannels.size)
+        settings.savedChannels.forEachIndexed { index, channel ->
+            editor.putString("$KEY_SAVED_CHANNEL_PREFIX$index", channel)
+        }
         editor.apply()
     }
 
@@ -167,6 +177,15 @@ class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
                 ),
             )
         }
+    }
+
+    private fun loadSavedChannels(): List<String> {
+        val count = preferences.getInt(KEY_SAVED_CHANNEL_COUNT, 0).coerceIn(0, MAX_SAVED_CHANNELS)
+        val saved = (0 until count).mapNotNull { index ->
+            preferences.getString("$KEY_SAVED_CHANNEL_PREFIX$index", null)
+                ?.takeIf { com.far.mqttcall.domain.channelTopic(it).isSuccess }
+        }
+        return (listOf(AppDefaults.defaultChannel) + saved).distinct()
     }
 
     private fun brokerField(index: Int, field: String): String = "$KEY_SAVED_BROKER_PREFIX$index$FIELD_SEPARATOR$field"
@@ -237,6 +256,9 @@ class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
         const val KEY_SAVED_BROKER_PREFIX = "saved_broker_"
         const val FIELD_SEPARATOR = "_"
         const val MAX_SAVED_BROKERS = 20
+        const val KEY_SAVED_CHANNEL_COUNT = "saved_channel_count"
+        const val KEY_SAVED_CHANNEL_PREFIX = "saved_channel_"
+        const val MAX_SAVED_CHANNELS = 100
     }
 
     private fun encryptedKeySlot(index: Int): String = KEY_ENCRYPTED_KEY_SLOT_PREFIX + index

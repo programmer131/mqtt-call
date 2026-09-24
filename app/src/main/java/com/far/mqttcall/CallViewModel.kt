@@ -12,7 +12,6 @@ import com.far.mqttcall.crypto.SecurityLevel
 import com.far.mqttcall.domain.AppDefaults
 import com.far.mqttcall.domain.BrokerProfile
 import com.far.mqttcall.domain.channelTopic
-import com.far.mqttcall.domain.defaultAudioPacketIntervalUnits
 import com.far.mqttcall.domain.defaultBrokerProfiles
 import com.far.mqttcall.floor.TalkFloor
 import com.far.mqttcall.floor.TalkState
@@ -49,6 +48,7 @@ enum class ConnectionState {
 data class CallUiState(
     val broker: BrokerProfile = AppDefaults.defaultBroker,
     val savedBrokers: List<BrokerProfile> = emptyList(),
+    val savedChannels: List<String> = listOf(AppDefaults.defaultChannel),
     val channel: String = AppDefaults.defaultChannel,
     val keySlots: List<String> = AppDefaults.defaultKeySlots,
     val activeKeyIndex: Int = 0,
@@ -80,6 +80,12 @@ sealed interface CallAction {
     data object MicrophonePermissionRevoked : CallAction
     data class SelectBroker(val broker: BrokerProfile) : CallAction
     data class SaveBroker(val broker: BrokerProfile) : CallAction
+    data class EditBroker(val oldName: String, val broker: BrokerProfile) : CallAction
+    data class DeleteBroker(val name: String) : CallAction
+    data class SelectChannel(val channel: String) : CallAction
+    data class SaveChannel(val channel: String) : CallAction
+    data class DeleteChannel(val channel: String) : CallAction
+    data object GenerateChannel : CallAction
     data class UpdateChannel(val channel: String) : CallAction
     data class UpdateKey(val key: String) : CallAction
     data class UpdateKeySlot(val slotIndex: Int, val key: String) : CallAction
@@ -133,6 +139,12 @@ class CallViewModel(
             }
             is CallAction.SelectBroker -> selectBroker(action.broker)
             is CallAction.SaveBroker -> saveBroker(action.broker)
+            is CallAction.EditBroker -> editBroker(action.oldName, action.broker)
+            is CallAction.DeleteBroker -> deleteBroker(action.name)
+            is CallAction.SelectChannel -> selectChannel(action.channel)
+            is CallAction.SaveChannel -> saveChannel(action.channel)
+            is CallAction.DeleteChannel -> deleteChannel(action.channel)
+            CallAction.GenerateChannel -> generateChannel()
             is CallAction.UpdateChannel -> updateChannel(action.channel)
             is CallAction.UpdateKey -> updateKeySlot(_uiState.value.activeKeyIndex, action.key)
             is CallAction.UpdateKeySlot -> updateKeySlot(action.slotIndex, action.key)
@@ -170,6 +182,7 @@ class CallViewModel(
                         keySlots = state.keySlots,
                         activeKeyIndex = state.activeKeyIndex,
                         savedBrokers = state.savedBrokers,
+                        savedChannels = state.savedChannels,
                     ),
                 )
             }.onFailure { error ->
@@ -249,6 +262,7 @@ class CallViewModel(
                 keySlots = state.keySlots,
                 activeKeyIndex = state.activeKeyIndex,
                 savedBrokers = state.savedBrokers,
+                savedChannels = state.savedChannels,
             ),
         )
     }
@@ -266,7 +280,7 @@ class CallViewModel(
             host = broker.host.trim(),
             username = broker.username?.trim()?.takeIf(String::isNotEmpty),
             password = broker.password?.takeIf(String::isNotEmpty),
-            audioPacketIntervalUnits = defaultAudioPacketIntervalUnits(broker.host),
+            audioPacketIntervalUnits = broker.audioPacketIntervalUnits,
         )
         if (normalized.name.isBlank() || normalized.host.isBlank() || normalized.port !in 1..65535) {
             update { copy(error = "Enter a broker name, host, and port from 1 to 65535") }
@@ -277,6 +291,80 @@ class CallViewModel(
             .plus(normalized)
         update { copy(broker = normalized, savedBrokers = saved, error = null) }
         persistSettings()
+    }
+
+    private fun editBroker(oldName: String, broker: BrokerProfile) {
+        if (!canEditBroker() || _uiState.value.savedBrokers.none { it.name == oldName }) return
+        val oldList = _uiState.value.savedBrokers.filterNot { it.name == oldName }
+        if (oldList.any { it.name.equals(broker.name.trim(), ignoreCase = true) }) {
+            update { copy(error = "A broker with that name already exists") }
+            return
+        }
+        saveBroker(broker)
+        if (_uiState.value.error == null) {
+            update { copy(savedBrokers = (oldList + this.broker).distinctBy { it.name.lowercase() }) }
+            persistSettings()
+        }
+    }
+
+    private fun deleteBroker(name: String) {
+        if (!canEditBroker()) return
+        update {
+            copy(
+                savedBrokers = savedBrokers.filterNot { it.name == name },
+                broker = if (broker.name == name) AppDefaults.defaultBroker else broker,
+                error = null,
+            )
+        }
+        persistSettings()
+    }
+
+    private fun selectChannel(channel: String) {
+        if (!canEditChannel() || channel !in _uiState.value.savedChannels) return
+        update { copy(channel = channel, topic = topicFor(channel), error = null) }
+        persistSettings()
+    }
+
+    private fun saveChannel(channel: String) {
+        if (!canEditChannel()) return
+        val value = channel.trim()
+        if (channelTopic(value).isFailure) {
+            update { copy(error = "Channel must contain 1 to 16 ASCII digits") }
+            return
+        }
+        update {
+            copy(channel = value, topic = topicFor(value), savedChannels = (savedChannels + value).distinct(), error = null)
+        }
+        persistSettings()
+    }
+
+    private fun deleteChannel(channel: String) {
+        if (!canEditChannel()) return
+        update {
+            val remaining = (savedChannels.filterNot { it == channel } + AppDefaults.defaultChannel).distinct()
+            val selected = if (this.channel == channel) remaining.firstOrNull() ?: AppDefaults.defaultChannel else this.channel
+            copy(channel = selected, topic = topicFor(selected), savedChannels = remaining, error = null)
+        }
+        persistSettings()
+    }
+
+    private fun generateChannel() {
+        if (!canEditChannel()) return
+        val value = buildString {
+            append(random.nextInt(9) + 1)
+            repeat(15) { append(random.nextInt(10)) }
+        }
+        saveChannel(value)
+    }
+
+    private fun canEditChannel(): Boolean {
+        if (_uiState.value.connection == ConnectionState.CONNECTED ||
+            _uiState.value.connection == ConnectionState.CONNECTING
+        ) {
+            update { copy(error = "Disconnect before changing channels") }
+            return false
+        }
+        return true
     }
 
     private fun canEditBroker(): Boolean {
@@ -297,6 +385,7 @@ class CallViewModel(
             keySlots = AppDefaults.defaultKeySlots,
             activeKeyIndex = 0,
             savedBrokers = _uiState.value.savedBrokers,
+            savedChannels = _uiState.value.savedChannels,
         )
         settingsStore.save(defaults)
         update {
@@ -308,12 +397,14 @@ class CallViewModel(
     }
 
     private fun updateChannel(channel: String) {
+        if (!canEditChannel()) return
         update {
             copy(
                 channel = channel,
                 topic = topicFor(channel),
             )
         }
+        if (channelTopic(channel).isSuccess) persistSettings()
     }
 
     private fun pressTalk() {
@@ -533,6 +624,7 @@ class CallViewModel(
     private fun SavedCallSettings.toUiState(): CallUiState = CallUiState(
         broker = broker,
         savedBrokers = savedBrokers,
+        savedChannels = (savedChannels + channel).distinct(),
         channel = channel,
         keySlots = keySlots,
         activeKeyIndex = activeKeyIndex,

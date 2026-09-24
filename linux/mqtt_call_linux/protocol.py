@@ -26,8 +26,8 @@ class Packet:
 
 def topic_for(channel: str) -> str:
     value = channel.strip()
-    if not value.isascii() or not value.isdigit() or not 1 <= len(value) <= 12:
-        raise ValueError("Channel must contain 1 to 12 digits")
+    if not value.isascii() or not value.isdigit() or not 1 <= len(value) <= 16:
+        raise ValueError("Channel must contain 1 to 16 ASCII digits")
     return f"call/channel/{value}"
 
 

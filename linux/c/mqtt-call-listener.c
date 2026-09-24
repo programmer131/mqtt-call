@@ -104,7 +104,7 @@ static int load_config(const char *path, config_t *config) {
     }
     fclose(file);
     if (!config->broker[0] || config->port < 1 || config->port > 65535 || !config->channel[0] || !config->key[0] ||
-        strlen(config->channel) > 12) {
+        strlen(config->channel) > 16) {
         fprintf(stderr, "invalid broker, port, channel, or key in %s\n", path);
         return -1;
     }

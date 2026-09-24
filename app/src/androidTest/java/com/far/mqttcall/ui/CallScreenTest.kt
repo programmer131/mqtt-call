@@ -3,6 +3,8 @@ package com.far.mqttcall.ui
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.compose.ui.test.assertHeightIsEqualTo
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -50,6 +52,22 @@ class CallScreenTest {
             .onNodeWithContentDescription("Push to talk")
             .assertIsDisplayed()
             .assertHeightIsEqualTo(190.dp)
+        composeTestRule.onAllNodes(hasScrollAction()).assertCountEquals(0)
+        composeTestRule.onNodeWithText("Channel: 3344").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Key: slot 1").assertIsDisplayed()
+    }
+
+    @Test
+    fun management_entry_opens_separate_page_and_back_returns_to_call() {
+        composeTestRule.setContent {
+            MqttCallTheme {
+                CallScreen(CallUiState(), {}, { false }, {}, false, {})
+            }
+        }
+        composeTestRule.onNodeWithText("Manage brokers, channels & keys").performClick()
+        composeTestRule.onNodeWithText("Brokers").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Back").performClick()
+        composeTestRule.onNodeWithContentDescription("Push to talk").assertIsDisplayed()
     }
 
     @Test

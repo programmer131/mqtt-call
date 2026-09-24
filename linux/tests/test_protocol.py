@@ -19,7 +19,8 @@ class ProtocolTest(unittest.TestCase):
         self.assertEqual(len(derive_key("3344", KEY_DEFAULT)), 32)
 
     def test_topic_rejects_invalid_channel(self):
-        for channel in ("", "a34", "1234567890123", "３３４４"):
+        self.assertEqual(topic_for("1234567890123456"), "call/channel/1234567890123456")
+        for channel in ("", "a34", "12345678901234567", "３３４４"):
             with self.subTest(channel=channel), self.assertRaises(ValueError):
                 topic_for(channel)
 

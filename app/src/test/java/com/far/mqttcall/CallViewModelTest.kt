@@ -66,6 +66,58 @@ class CallViewModelTest {
     }
 
     @Test
+    fun `saving selecting and deleting channels persists the active choice`() = runTest {
+        val fixture = Fixture()
+        fixture.viewModel.dispatch(CallAction.SaveChannel("1234567890123456"))
+        assertEquals("1234567890123456", fixture.settings.load().channel)
+        assertTrue(fixture.settings.load().savedChannels.contains("1234567890123456"))
+        fixture.viewModel.dispatch(CallAction.SelectChannel("3344"))
+        fixture.viewModel.dispatch(CallAction.DeleteChannel("1234567890123456"))
+        assertEquals("3344", fixture.settings.load().channel)
+        assertFalse(fixture.settings.load().savedChannels.contains("1234567890123456"))
+    }
+
+    @Test
+    fun `random channel has sixteen ASCII digits and is saved and selected`() = runTest {
+        val fixture = Fixture()
+        fixture.viewModel.dispatch(CallAction.GenerateChannel)
+        val channel = fixture.settings.load().channel
+        assertTrue(channel.matches(Regex("[1-9][0-9]{15}")))
+        assertTrue(fixture.settings.load().savedChannels.contains(channel))
+    }
+
+    @Test
+    fun `previously selected channel remains available after reopening`() = runTest {
+        val settings = InMemoryCallSettingsStore(
+            SavedCallSettings(AppDefaults.defaultBroker, "7788", AppDefaults.defaultKeySlots),
+        )
+        val fixture = Fixture(settings)
+        assertTrue(fixture.viewModel.uiState.value.savedChannels.contains("7788"))
+    }
+
+    @Test
+    fun `edited and deleted broker profiles update selected broker`() = runTest {
+        val fixture = Fixture()
+        val original = BrokerProfile("Office", "192.168.1.20", 1883, false)
+        fixture.viewModel.dispatch(CallAction.SaveBroker(original))
+        fixture.viewModel.dispatch(CallAction.EditBroker("Office", original.copy(name = "Home")))
+        assertEquals("Home", fixture.settings.load().broker.name)
+        assertEquals(1, fixture.settings.load().savedBrokers.size)
+        fixture.viewModel.dispatch(CallAction.DeleteBroker("Home"))
+        assertTrue(fixture.settings.load().savedBrokers.isEmpty())
+        assertEquals(AppDefaults.defaultBroker, fixture.settings.load().broker)
+    }
+
+    @Test
+    fun `editing broker without changing host preserves packet interval`() = runTest {
+        val fixture = Fixture()
+        val original = BrokerProfile("Office", "192.168.1.20", 1883, false, audioPacketIntervalUnits = 3)
+        fixture.viewModel.dispatch(CallAction.SaveBroker(original))
+        fixture.viewModel.dispatch(CallAction.EditBroker("Office", original.copy(port = 1884)))
+        assertEquals(3, fixture.settings.load().broker.audioPacketIntervalUnits)
+    }
+
+    @Test
     fun `generate key changes only the key`() = runTest {
         val fixture = Fixture()
         fixture.viewModel.dispatch(CallAction.GenerateKey)
