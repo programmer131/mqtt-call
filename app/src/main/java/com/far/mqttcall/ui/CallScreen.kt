@@ -107,6 +107,7 @@ private fun MainCallPage(
 ) {
     val busy = state.connection == ConnectionState.CONNECTED || state.connection == ConnectionState.CONNECTING
     val brokers = (state.savedBrokers + defaultBrokerProfiles() + state.broker).distinctBy { it.name }
+    val clipboard = LocalClipboardManager.current
     Column(
         modifier = modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -119,8 +120,17 @@ private fun MainCallPage(
         Choice("Broker: ${state.broker.name}", brokers, { it.name }, !busy) {
             onAction(CallAction.SelectBroker(it))
         }
-        Choice("Channel: ${state.channel}", state.savedChannels.distinct(), { it }, !busy) {
-            onAction(CallAction.SelectChannel(it))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Box(Modifier.weight(1f)) {
+                Choice("Channel: ${state.channel}", state.savedChannels.distinct(), { it }, !busy) {
+                    onAction(CallAction.SelectChannel(it))
+                }
+            }
+            TextButton(
+                onClick = { clipboard.setText(AnnotatedString(state.channel)) },
+                enabled = state.channel.isNotBlank(),
+                modifier = Modifier.semantics { contentDescription = "Copy channel ID" },
+            ) { Text("Copy") }
         }
         Choice("Key: slot ${state.activeKeyIndex + 1}", state.keySlots.indices.toList(), { "Slot ${it + 1}" }, !busy) {
             onAction(CallAction.ActivateKey(it))

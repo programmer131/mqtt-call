@@ -71,6 +71,17 @@ class CallScreenTest {
     }
 
     @Test
+    fun copy_channel_id_action_is_visible_on_main_page() {
+        composeTestRule.setContent {
+            MqttCallTheme {
+                CallScreen(CallUiState(), {}, { false }, {}, false, {})
+            }
+        }
+
+        composeTestRule.onNodeWithContentDescription("Copy channel ID").assertIsDisplayed().performClick()
+    }
+
+    @Test
     fun exit_action_is_in_top_bar_and_invokes_callback() {
         var exits = 0
         composeTestRule.setContent {
