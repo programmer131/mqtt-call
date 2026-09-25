@@ -1,7 +1,7 @@
 package com.far.mqttcall.ui
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.compose.ui.test.assertHeightIsEqualTo
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.hasScrollAction
@@ -11,6 +11,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.dp
 import com.far.mqttcall.CallUiState
+import com.far.mqttcall.ConnectionState
 import com.far.mqttcall.domain.AppDefaults
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -51,10 +52,10 @@ class CallScreenTest {
         composeTestRule
             .onNodeWithContentDescription("Push to talk")
             .assertIsDisplayed()
-            .assertHeightIsEqualTo(190.dp)
+            .assertHeightIsAtLeast(280.dp)
         composeTestRule.onAllNodes(hasScrollAction()).assertCountEquals(0)
         composeTestRule.onNodeWithText("Channel: 3344").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Key: slot 1").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Key: KEY 1").assertIsDisplayed()
     }
 
     @Test
@@ -64,9 +65,9 @@ class CallScreenTest {
                 CallScreen(CallUiState(), {}, { false }, {}, false, {})
             }
         }
-        composeTestRule.onNodeWithText("Manage brokers, channels & keys").performClick()
+        composeTestRule.onNodeWithContentDescription("Manage brokers, channels & keys").performClick()
         composeTestRule.onNodeWithText("Brokers").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Back").performClick()
+        composeTestRule.onNodeWithContentDescription("Back").performClick()
         composeTestRule.onNodeWithContentDescription("Push to talk").assertIsDisplayed()
     }
 
@@ -97,7 +98,7 @@ class CallScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithText("Exit").assertIsDisplayed().performClick()
+        composeTestRule.onNodeWithContentDescription("Exit").assertIsDisplayed().performClick()
         composeTestRule.runOnIdle { assertEquals(1, exits) }
     }
 
@@ -119,5 +120,42 @@ class CallScreenTest {
 
         composeTestRule.onNodeWithText("App Settings").assertIsDisplayed().performClick()
         composeTestRule.runOnIdle { assertEquals(1, opens) }
+    }
+
+    @Test
+    fun connected_call_shows_status_and_current_speaker_area() {
+        composeTestRule.setContent {
+            MqttCallTheme {
+                CallScreen(
+                    state = CallUiState(
+                        connection = ConnectionState.CONNECTED,
+                        talkerName = "AHMED",
+                    ),
+                    onAction = {},
+                    onPttPress = { false },
+                    onExit = {},
+                    showMicrophoneSettings = false,
+                    openAppSettings = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Connected").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Buffer: buffering").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Current Speaker").assertIsDisplayed()
+        composeTestRule.onNodeWithText("AHMED").assertIsDisplayed()
+    }
+
+    @Test
+    fun manage_page_shows_user_profile_section() {
+        composeTestRule.setContent {
+            MqttCallTheme {
+                CallScreen(CallUiState(), {}, { false }, {}, false, {})
+            }
+        }
+
+        composeTestRule.onNodeWithContentDescription("Manage brokers, channels & keys").performClick()
+        composeTestRule.onNodeWithText("User Profile").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Encryption Keys").assertIsDisplayed()
     }
 }
