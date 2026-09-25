@@ -14,6 +14,7 @@ TAG_SIZE = 16
 CHANNEL_DEFAULT = "3344"
 KEY_DEFAULT = "PTT-DEMO-3344"
 MAX_FRAMES = 50
+MAX_TALKER_NAME_BYTES = 64
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,26 @@ class Packet:
     session_id: bytes
     sequence: int
     plaintext: bytes
+
+
+@dataclass(frozen=True)
+class TalkClaim:
+    expiry_ms: int
+    user_name: str | None
+
+
+def decode_talk_claim(data: bytes) -> TalkClaim | None:
+    if len(data) < 8:
+        return None
+    name_bytes = data[8:]
+    if len(name_bytes) > MAX_TALKER_NAME_BYTES:
+        return None
+    try:
+        name = name_bytes.decode("utf-8").strip() or None
+    except UnicodeDecodeError:
+        return None
+    expiry_ms = struct.unpack_from(">q", data, 0)[0]
+    return TalkClaim(expiry_ms, name)
 
 
 def topic_for(channel: str) -> str:

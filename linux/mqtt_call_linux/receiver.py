@@ -10,7 +10,7 @@ import paho.mqtt.client as mqtt
 
 from .audio import OpusOutput
 from .jitter import JitterBuffer
-from .protocol import decode_audio_batch, decrypt_packet, derive_key, topic_for
+from .protocol import decode_audio_batch, decode_talk_claim, decrypt_packet, derive_key, topic_for
 
 BROKERS = {
     "EMQX public": ("broker.emqx.io", 1883, False),
@@ -28,6 +28,7 @@ class ReceiverStatus:
     queued: int = 0
     batches: int = 0
     error: str = ""
+    speaker: str = ""
 
 
 class Receiver:
@@ -130,12 +131,15 @@ class Receiver:
         if packet is None:
             return
         if packet.kind == 1:  # CLAIM
+            claim = decode_talk_claim(packet.plaintext)
             with self._lock:
                 self.status.state = "Receiving"
+                self.status.speaker = claim.user_name if claim and claim.user_name else ""
         elif packet.kind == 2:  # RELEASE
             self._jitter.release(packet.session_id)
             with self._lock:
                 self.status.state = "Listening"
+                self.status.speaker = ""
         elif packet.kind == 3:  # AUDIO
             frames = decode_audio_batch(packet.plaintext)
             if frames is None:
@@ -165,4 +169,3 @@ class Receiver:
                     self.status.state = "Audio error"
                     self.status.error = str(exc)
                 self._stop.set()
-

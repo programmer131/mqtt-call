@@ -48,6 +48,22 @@ class CallSettingsStoreTest {
     }
 
     @Test
+    fun `optional user name survives settings save`() {
+        val store = InMemoryCallSettingsStore()
+
+        store.save(
+            SavedCallSettings(
+                broker = AppDefaults.defaultBroker,
+                channel = AppDefaults.defaultChannel,
+                keySlots = AppDefaults.defaultKeySlots,
+                userName = "Alice",
+            ),
+        )
+
+        assertEquals("Alice", store.load().userName)
+    }
+
+    @Test
     fun `disconnect clears keep connected without clearing microphone prompt decision`() {
         val store = InMemoryCallSettingsStore()
         store.markMicrophonePermissionPrompted()

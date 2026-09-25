@@ -331,6 +331,7 @@ internal class CallServiceLifecycle(
             state.value = state.value.copy(
                 connection = ConnectionState.DISCONNECTED,
                 talkState = TalkState.IDLE,
+                talkerName = null,
                 bufferState = BufferState.BUFFERING,
                 canTalk = false,
                 securityLevel = null,

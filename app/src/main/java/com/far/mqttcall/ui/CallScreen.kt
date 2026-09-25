@@ -142,6 +142,7 @@ private fun MainCallPage(
             Text(state.connection.name.lowercase().replaceFirstChar(Char::uppercase))
         }
         Text("Talk: ${state.talkState.name.lowercase().replace('_', ' ')} · Buffer: ${state.bufferState.name.lowercase()}", style = MaterialTheme.typography.bodySmall)
+        state.talkerName?.takeIf { it.isNotBlank() }?.let { Text("Talking: $it", style = MaterialTheme.typography.bodySmall) }
         if (state.error != null) Text(state.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         TextButton(onClick = onManage) { Text("Manage brokers, channels & keys") }
     }
@@ -181,6 +182,15 @@ private fun ManagementPage(state: CallUiState, onAction: (CallAction) -> Unit, m
     ) {
         Text("Brokers", style = MaterialTheme.typography.titleLarge)
         Text("Disconnect to change brokers, channels, or keys.", style = MaterialTheme.typography.bodySmall)
+        OutlinedTextField(
+            value = state.userName,
+            onValueChange = { onAction(CallAction.UpdateUserName(it)) },
+            label = { Text("User name (optional)") },
+            supportingText = { Text("Shown to receivers when you press PTT") },
+            enabled = !busy,
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
         (state.savedBrokers + defaultBrokerProfiles()).distinctBy { it.name }.forEach { broker ->
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(8.dp)) {

@@ -23,6 +23,7 @@ data class SavedCallSettings(
     val activeKeyIndex: Int = 0,
     val savedBrokers: List<BrokerProfile> = emptyList(),
     val savedChannels: List<String> = listOf(AppDefaults.defaultChannel),
+    val userName: String = "",
     val keepConnected: Boolean = false,
     val microphonePermissionPrompted: Boolean = false,
 ) {
@@ -55,6 +56,7 @@ class InMemoryCallSettingsStore(
 
     override fun save(settings: SavedCallSettings) {
         current = settings.copy(
+            userName = settings.userName,
             keepConnected = current.keepConnected,
             microphonePermissionPrompted = current.microphonePermissionPrompted,
         )
@@ -98,6 +100,7 @@ class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
             activeKeyIndex = preferences.getInt(KEY_ACTIVE_KEY_INDEX, 0).coerceIn(0, KEY_SLOT_COUNT - 1),
             savedBrokers = loadSavedBrokers(),
             savedChannels = (loadSavedChannels() + preferences.getString(KEY_CHANNEL, AppDefaults.defaultChannel)!!).distinct(),
+            userName = preferences.getString(KEY_USER_NAME, "") ?: "",
             keepConnected = preferences.getBoolean(KEY_KEEP_CONNECTED, false),
             microphonePermissionPrompted = preferences.getBoolean(KEY_MICROPHONE_PERMISSION_PROMPTED, false),
         )
@@ -113,6 +116,7 @@ class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
             .putString(KEY_BROKER_PASSWORD, settings.broker.password)
             .putInt(KEY_AUDIO_PACKET_INTERVAL_UNITS, settings.broker.audioPacketIntervalUnits)
             .putString(KEY_CHANNEL, settings.channel)
+            .putString(KEY_USER_NAME, settings.userName)
             .putString(KEY_ENCRYPTED_KEY, encryptKey(settings.keySlots.first()))
             .putInt(KEY_ACTIVE_KEY_INDEX, settings.activeKeyIndex)
         settings.keySlots.forEachIndexed { index, key ->
@@ -247,6 +251,7 @@ class AndroidCallSettingsStore(context: Context) : CallSettingsStore {
         const val KEY_BROKER_PASSWORD = "broker_password"
         const val KEY_AUDIO_PACKET_INTERVAL_UNITS = "audio_packet_interval_units"
         const val KEY_CHANNEL = "channel"
+        const val KEY_USER_NAME = "user_name"
         const val KEY_ENCRYPTED_KEY = "encrypted_key"
         const val KEY_ACTIVE_KEY_INDEX = "active_key_index"
         const val KEY_KEEP_CONNECTED = "keep_connected"

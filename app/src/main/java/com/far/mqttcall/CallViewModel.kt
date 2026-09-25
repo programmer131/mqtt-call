@@ -18,6 +18,9 @@ import com.far.mqttcall.floor.TalkState
 import com.far.mqttcall.settings.CallSettingsStore
 import com.far.mqttcall.settings.KEY_SLOT_COUNT
 import com.far.mqttcall.settings.SavedCallSettings
+import com.far.mqttcall.protocol.decodeTalkClaim
+import com.far.mqttcall.protocol.encodeTalkClaim
+import com.far.mqttcall.protocol.normalizeTalkerName
 import com.far.mqttcall.transport.MqttEvent
 import com.far.mqttcall.transport.MqttTransport
 import java.nio.ByteBuffer
@@ -49,12 +52,14 @@ data class CallUiState(
     val broker: BrokerProfile = AppDefaults.defaultBroker,
     val savedBrokers: List<BrokerProfile> = emptyList(),
     val savedChannels: List<String> = listOf(AppDefaults.defaultChannel),
+    val userName: String = "",
     val channel: String = AppDefaults.defaultChannel,
     val keySlots: List<String> = AppDefaults.defaultKeySlots,
     val activeKeyIndex: Int = 0,
     val topic: String = topicFor(AppDefaults.defaultChannel),
     val connection: ConnectionState = ConnectionState.DISCONNECTED,
     val talkState: TalkState = TalkState.IDLE,
+    val talkerName: String? = null,
     val bufferState: BufferState = BufferState.BUFFERING,
     val securityLevel: SecurityLevel? = null,
     val microphoneGranted: Boolean = false,
@@ -86,6 +91,7 @@ sealed interface CallAction {
     data class SaveChannel(val channel: String) : CallAction
     data class DeleteChannel(val channel: String) : CallAction
     data object GenerateChannel : CallAction
+    data class UpdateUserName(val userName: String) : CallAction
     data class UpdateChannel(val channel: String) : CallAction
     data class UpdateKey(val key: String) : CallAction
     data class UpdateKeySlot(val slotIndex: Int, val key: String) : CallAction
@@ -145,6 +151,7 @@ class CallViewModel(
             is CallAction.SaveChannel -> saveChannel(action.channel)
             is CallAction.DeleteChannel -> deleteChannel(action.channel)
             CallAction.GenerateChannel -> generateChannel()
+            is CallAction.UpdateUserName -> updateUserName(action.userName)
             is CallAction.UpdateChannel -> updateChannel(action.channel)
             is CallAction.UpdateKey -> updateKeySlot(_uiState.value.activeKeyIndex, action.key)
             is CallAction.UpdateKeySlot -> updateKeySlot(action.slotIndex, action.key)
@@ -183,6 +190,7 @@ class CallViewModel(
                         activeKeyIndex = state.activeKeyIndex,
                         savedBrokers = state.savedBrokers,
                         savedChannels = state.savedChannels,
+                        userName = state.userName,
                     ),
                 )
             }.onFailure { error ->
@@ -207,6 +215,7 @@ class CallViewModel(
                 copy(
                     connection = ConnectionState.DISCONNECTED,
                     talkState = TalkState.IDLE,
+                    talkerName = null,
                     bufferState = BufferState.BUFFERING,
                     canTalk = false,
                 )
@@ -263,6 +272,7 @@ class CallViewModel(
                 activeKeyIndex = state.activeKeyIndex,
                 savedBrokers = state.savedBrokers,
                 savedChannels = state.savedChannels,
+                userName = state.userName,
             ),
         )
     }
@@ -386,6 +396,7 @@ class CallViewModel(
             activeKeyIndex = 0,
             savedBrokers = _uiState.value.savedBrokers,
             savedChannels = _uiState.value.savedChannels,
+            userName = _uiState.value.userName,
         )
         settingsStore.save(defaults)
         update {
@@ -405,6 +416,11 @@ class CallViewModel(
             )
         }
         if (channelTopic(channel).isSuccess) persistSettings()
+    }
+
+    private fun updateUserName(userName: String) {
+        update { copy(userName = normalizeTalkerName(userName), error = null) }
+        persistSettings()
     }
 
     private fun pressTalk() {
@@ -489,9 +505,10 @@ class CallViewModel(
         if (remoteSession.contentEquals(sessionId)) return
         when (decoded.header.kind) {
             com.far.mqttcall.protocol.PacketKind.CLAIM -> {
-                decodeClaim(decoded.plaintext) ?: return
+                val claim = decodeTalkClaim(decoded.plaintext) ?: return
                 // The sender's expiry uses its own wall clock; lease from our clock to tolerate skew.
                 floor.onRemoteClaim(remoteSession, clockMs() + TALK_LEASE_MS)
+                update { copy(talkerName = claim.userName) }
                 log("Remote claim received")
                 watchRemoteFloor()
                 refreshTalkState()
@@ -499,6 +516,7 @@ class CallViewModel(
             com.far.mqttcall.protocol.PacketKind.RELEASE -> {
                 floor.onRemoteRelease(remoteSession)
                 jitterBuffer.finish(remoteSession)
+                update { copy(talkerName = null) }
                 log("Remote release received, received=${_uiState.value.receivedBatches}")
                 startPlaybackIfReady()
                 refreshTalkState()
@@ -545,7 +563,7 @@ class CallViewModel(
             nonce = ByteArray(NONCE_LENGTH),
         )
         val plaintext = if (kind == CONTROL_CLAIM) {
-            ByteBuffer.allocate(Long.SIZE_BYTES).putLong(clockMs() + TALK_LEASE_MS).array()
+            encodeTalkClaim(clockMs() + TALK_LEASE_MS, _uiState.value.userName)
         } else {
             ByteArray(0)
         }
@@ -593,11 +611,6 @@ class CallViewModel(
         }
     }.getOrNull()
 
-    private fun decodeClaim(payload: ByteArray): Long? = runCatching {
-        require(payload.size == Long.SIZE_BYTES)
-        ByteBuffer.wrap(payload).long
-    }.getOrNull()
-
     private fun refreshTalkState() {
         update { copy(talkState = floor.state(), canTalk = isConnectedAndFree()) }
     }
@@ -628,6 +641,7 @@ class CallViewModel(
         channel = channel,
         keySlots = keySlots,
         activeKeyIndex = activeKeyIndex,
+        userName = userName,
         topic = topicFor(channel),
     )
 

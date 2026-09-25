@@ -7,6 +7,7 @@ from mqtt_call_linux.protocol import (
     HEADER_SIZE,
     KEY_DEFAULT,
     decode_audio_batch,
+    decode_talk_claim,
     decrypt_packet,
     derive_key,
     topic_for,
@@ -56,6 +57,11 @@ class ProtocolTest(unittest.TestCase):
         )
 
         self.assertEqual(decode_audio_batch(blob), frames)
+
+    def test_claim_decodes_optional_talker_name(self):
+        claim = struct.pack(">q", 1234) + "Alice".encode()
+        self.assertEqual(decode_talk_claim(claim).user_name, "Alice")
+        self.assertIsNone(decode_talk_claim(struct.pack(">q", 1234)).user_name)
 
 
 if __name__ == "__main__":

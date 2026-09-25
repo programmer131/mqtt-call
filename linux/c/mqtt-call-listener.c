@@ -399,7 +399,12 @@ static void on_message(struct mosquitto *client, void *userdata, const struct mo
     if (!message || !message->payload || message->payloadlen < HEADER_SIZE + TAG_SIZE) return;
     if (!decrypt_packet(message->payload, (size_t)message->payloadlen, context->key, &kind,
                         session, &sequence, &plain, &plain_size)) return;
-    if (kind == 1) mark_claim(context->queue, session, sequence);
+    if (kind == 1) {
+        size_t name_size = plain_size > 8 ? (size_t)plain_size - 8 : 0;
+        if (name_size > 64) name_size = 64;
+        if (name_size) fprintf(stderr, "talking: %.*s\n", (int)name_size, (char *)plain + 8);
+        mark_claim(context->queue, session, sequence);
+    }
     else if (kind == 2) mark_release(context->queue, session);
     else if (kind == 3) {
         batch_t *batch = decode_audio(session, sequence, plain, (size_t)plain_size);
